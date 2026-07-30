@@ -88,6 +88,7 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | shift + up / down | move it earlier or later |
 | left / right | change what it will do: waits, jumps in, paused, and round again |
 | ctrl + enter | let go of the list and run what is runnable, now |
+| `/model`, `/status`, `/usage` | open at once, even mid-turn. They change nothing Claude is doing, so they do not wait |
 | delete | remove it, only while the editor is empty |
 
 Reading the list never stops it. **Changing a mode does**, until you let go,

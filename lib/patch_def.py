@@ -180,6 +180,34 @@ def _resolve(m):
     return pre + m.group(0)
 
 
+def _model_now(m):
+    """Let /model open while Claude is working, instead of queueing.
+
+    A slash command typed mid-turn only runs straight away if it is a dialog
+    AND its own `immediate` flag is set, and the lookup filters on that flag,
+    so a command without it is never even considered and falls through to the
+    queue. That is why /status, /usage and /rename open at once while /model
+    waited: they are marked immediate, and /model's dialog reads a gate,
+    `tengu_immediate_model_command`, that ships turned off.
+
+    So the work was already done and switched off, which is the same shape as
+    the queue selector this patch turns on elsewhere. Nothing here builds a
+    second immediate path; it answers the existing question with yes.
+
+    Worth saying why this is safe rather than merely convenient: the picker
+    changes local state and sends nothing to the model, so there is no turn to
+    disturb. It rides the exact route /status already uses. Mounssif put it
+    plainly: these are internal, they do not go to the LLM, so why should they
+    wait.
+
+    CLAUDE_QUEUE_MODEL_NOW=off hands the decision back to Anthropic's gate.
+    """
+    return (
+        'function {fn}(){{return process.env.CLAUDE_QUEUE_MODEL_NOW==="off"'
+        '?{gate}("tengu_immediate_model_command",!1):!0}}'
+    ).format(fn=m.group("fn"), gate=m.group("gate"))
+
+
 def _no_turn_for_paused(m):
     """Do not start a turn for a submission that is entirely paused.
 
@@ -1238,6 +1266,7 @@ after it in their saved order.
     export CLAUDE_QUEUE_PERSIST=off      never write the queue to disk
     export CLAUDE_QUEUE_ADOPT=on         let a fresh session take the newest
                                          saved queue in this project
+    export CLAUDE_QUEUE_MODEL_NOW=off    make /model wait for the turn again
 """,
     edits=[
         Edit(
@@ -1265,6 +1294,14 @@ after it in their saved order.
                 r"preExpansionValue:(?P=cmd)\.preExpansionValue\?\.trim\(\)\}\)"
             ),
             _priority,
+        ),
+        Edit(
+            "let /model open while Claude is working",
+            re.compile(
+                r'function (?P<fn>\w+)\(\)\{return (?P<gate>\w+)\('
+                r'"tengu_immediate_model_command",!1\)\}'
+            ),
+            _model_now,
         ),
         Edit(
             "no turn clock for a submission that only pauses",

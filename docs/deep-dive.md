@@ -393,6 +393,7 @@ Each has exactly two states; the default is what you get when it is unset.
 | `CLAUDE_QUEUE_COLLAPSE` | a long waiting message is folded to one line | `off` | every waiting message drawn in full, however tall |
 | `CLAUDE_QUEUE_PERSIST` | waiting messages are saved, and come back when you resume the session | `off` | nothing is written to disk and nothing is restored |
 | `CLAUDE_QUEUE_ADOPT` | a queue is only ever restored into the session that saved it | `on` | a session with no queue of its own adopts the newest one in the project, which also lets it leak between unrelated sessions |
+| `CLAUDE_QUEUE_MODEL_NOW` | `/model` opens at once while Claude works, like `/status` | `off` | `/model` queues until the turn ends, which is Anthropic's own default |
 
 The value must match exactly, lower case; anything else leaves the default in
 place. To return to a default, `unset` the variable. Setting all five gives
@@ -412,7 +413,7 @@ What happens to waiting messages when:
 
 | event | your waiting messages |
 |---|---|
-| `/model` typed while a tool is running | it QUEUES, shown as `[waits] /model`, and the picker opens when the turn ends. **Stock does the same thing**, driven side by side on 2026-07-30: an unpatched 2.1.220 also queued it and also did not open the picker. The only difference the patch makes is the label, which is stock's behaviour said out loud. A model chosen this way therefore applies from the next turn; it cannot change the turn that was running |
+| `/model` typed while a tool is running | **it opens the picker at once, and the turn keeps running.** Stock queues it instead, driven side by side on 2026-07-30. Claude Code had already built the immediate version and left it behind a gate that ships off; this turns the gate on, so /model now behaves like /status and /usage, which were already immediate. `CLAUDE_QUEUE_MODEL_NOW=off` hands the decision back to Anthropic's gate. Choosing a model does not change the turn that is running: Claude Code says so itself, "the full history gets re-read on your next message" |
 | `/compact` typed while messages wait | it QUEUES, shown as `[waits] /compact`, and runs in its turn. Messages queued behind it survived the compaction and ran after it (driven with manual `/compact`; the automatic 95% compaction was not driven) |
 | Escape, editor empty | kept. The turn ends and the first one starts. Disk edits already made by the killed tool remain |
 | Escape while editing a pulled-back message | the whole queue is emptied into the editor, joined, same as stock. Nothing runs until you send again |
@@ -429,8 +430,9 @@ And the small print of the keys:
 - Shell commands (`!`) are never marker-parsed, so a command starting with
   `q` cannot be mangled.
 - Slash commands are never marker-parsed, and they differ from each other
-  while Claude works: `/status` opens straight away, `/compact` and
-  `/model` queue, exactly as they do on stock.
+  while Claude works: `/status`, `/usage` and `/model` open straight
+  away, `/compact` queues. Only `/model` differs from stock, and only
+  because a finished feature was sitting behind a gate.
 - Tab does nothing in stock Claude Code's prompt box, and the completion menu
   still takes it first when open, so nothing you already use is displaced.
 - A marker still wins over tab: `q ...` plus tab waits, because an explicit
