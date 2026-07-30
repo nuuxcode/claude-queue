@@ -87,10 +87,16 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | enter on a waiting message | pull it back to edit alone, send returns it to its slot |
 | shift + up / down | move it earlier or later |
 | left / right | change what it will do: waits, jumps in, paused, and round again |
+| ctrl + enter | let go of the list and run what is runnable, now |
 | delete | remove it, only while the editor is empty |
 
-While you are pointing at a message in the list, nothing drains. Step off it
-with down, or type anything, and the queue carries on.
+Reading the list never stops it. **Changing a mode does**, until you let go,
+which is what lets you cycle past `waits` to reach `jumps in` without it
+firing on the way. Let go with **ctrl and enter** to run it now, or by
+stepping off the list with down, or by typing anything.
+
+On an idle session `waits` and `jumps in` mean the same thing, because there
+is no running turn to wait for or jump into. Both mean run it now.
 
 Coming from Codex? `export CLAUDE_QUEUE_DEFAULT=steer` gives you the same
 arrangement: enter jumps in, tab queues.

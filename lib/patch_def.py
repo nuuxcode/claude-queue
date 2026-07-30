@@ -350,7 +350,9 @@ def _tab_key(m, js):
     """
     n = _tab_names(js)
     return (
-        'case"return":if({k}.ctrl)return;return {ae}({k});'
+        'case"return":if({k}.ctrl){{'
+        "if(!{w}.text&&globalThis.__qsRun?.())return;return}}"
+        "return {ae}({k});"
         "case\"enter\":return {w}.insert(`\n`);"
         'case"tab":if({submit}&&{w}.text.trim()){{'
         "globalThis.__qsInvert={w}.text,{submit}({w}.text),{flag}=!0;return {w}}}"
@@ -612,7 +614,7 @@ def _move_fn(m, js):
         '__qk=__qm.indexOf(__qc.priority??"next");'
         "if(__qk<0)__qk=0;"
         "__qc.priority=__qm[(__qk+__qd+__qm.length)%__qm.length];"
-        "{notify}();return!0}};"
+        "globalThis.__qsFrozen=!0,{notify}();return!0}};"
         "globalThis.__qsPoke={notify};"
     ).format(arr=m.group("arr"), ed=n["editable"], notify=n["notify"],
              paused=PAUSED) + m.group(0)
@@ -665,7 +667,11 @@ def _install_reorder(m):
         "let __qsi={ht}.getState().queueEditIndex;"
         "if(__qsi===null||__qsi===void 0)return!1;"
         "return globalThis.__qsSetMode?.(__qsi,__qsd)===!0}}"
-    ).format(ht=m.group("ht"))
+        ",__qsRn=globalThis.__qsRun=()=>{{"
+        "let __qsi={ht}.getState().queueEditIndex;"
+        "if(__qsi===null||__qsi===void 0)return!1;"
+        "{lr}(null);return!0}}"
+    ).format(ht=m.group("ht"), lr=m.group("lr"))
 
 
 def _mode_arrows(m):
@@ -785,8 +791,9 @@ def _follow_message(m):
         "let __qsQ={pi}.useRef({cr});"
         "{pi}.useEffect(()=>{{"
         "let __qsB=globalThis.__qsSel;globalThis.__qsSel={gr};"
-        "if(({gr}===null||{gr}===void 0)"
-        "&&__qsB!==null&&__qsB!==void 0)globalThis.__qsPoke?.();"
+        "if({gr}===null||{gr}===void 0){{"
+        "let __qsF=globalThis.__qsFrozen;globalThis.__qsFrozen=!1;"
+        "if(__qsF||__qsB!==null&&__qsB!==void 0)globalThis.__qsPoke?.()}}"
         "let __qsP=__qsQ.current;__qsQ.current={cr};"
         "if({gr}===null)return;"
         "let __qsE={cr}.filter({ed});"
@@ -1131,7 +1138,7 @@ def _hold_and_restore(m):
         "if({t})return;"
         "if({o}.length===0)return;"
         'if({o}.every((__qc)=>__qc.priority==="paused"))return;'
-        "if(globalThis.__qsSel!==null&&globalThis.__qsSel!==void 0)return;"
+        "if(globalThis.__qsFrozen)return;"
         "if(globalThis.__qsHold)return;"
         "{call}({{executeInput:{e}}})}},["
     ).format(**m.groupdict())
@@ -1164,7 +1171,7 @@ def _not_busy_while_held(m):
     """
     return (
         "mainConversationId:{cid},mainIsBusy:{bs}||!!{bn}||"
-        "{len}()>0&&!globalThis.__qsHold&&globalThis.__qsSel==null}})"
+        "{len}()>0&&!globalThis.__qsHold&&!globalThis.__qsFrozen}})"
     ).format(**m.groupdict())
 
 
@@ -1437,9 +1444,26 @@ after it in their saved order.
         Edit(
             "say that you can reorder them too",
             re.compile(r'return"Press up to edit queued messages"'),
-            lambda m: 'return"Press up to edit queued messages, '
-                      'shift+up/down to reorder, left/right to change mode, '
-                      'del to remove"',
+            # Two rules here, both learned the hard way.
+            #
+            # Short, because the line is truncated on a normal terminal and a
+            # hint you cannot read to the end is worse than a brief one. The
+            # old wording listed four keys and got cut before the third.
+            #
+            # ASCII, because anything else arrives mangled. Arrows and a
+            # middle dot came out as "\u00c3\u00a2\u00c2\u2020\u00c2" once
+            # inside the repacked binary, while the app's own middle dots
+            # rendered fine, so the text this patch introduces has to stay in
+            # the range that survives the trip.
+            #
+            # The second line replaces the first as soon as the queue changes
+            # under a highlight, which is exactly the moment "how do I let go
+            # of this" becomes the question.
+            lambda m: 'return globalThis.__qsSel!=null?'
+                      '"left/right mode, enter edit, del remove, '
+                      'ctrl+enter run":'
+                      '"Press up to edit queued messages, '
+                      'left/right to change mode"',
         ),
         Edit(
             "give a message its marker back when you edit it",

@@ -193,13 +193,22 @@ and it comes back parked after a restart.
 | enter | pull the highlighted one back into the editor, alone; sending returns it to its slot |
 | shift+up / shift+down | move it earlier or later, highlight travels with it |
 | left / right | change its mode: waits, jumps in, paused, and round again |
+| ctrl + enter | let go of the list and run what is runnable, now |
 | delete / backspace | remove it, **only while the editor is empty** |
 
-Nothing drains while a message is highlighted. That is what makes changing a
-mode usable rather than a race: without it, moving a parked message onto
-"waits" in an idle session ran it on the way past, so the third mode could
-never be reached. Step off the list with down, or type anything, and the queue
-carries on where it left off.
+**Reading the list never stops it draining. Changing a mode does**, until you
+let go of it. That asymmetry is deliberate. Without the hold, moving a parked
+message onto "waits" in an idle session ran it on the way past, so the third
+mode could never be reached; with the hold applied to mere reading, a queue
+you were only looking at stopped when the turn ended, which surprised nobody
+in a good way.
+
+Let go with ctrl and enter to run it now, by stepping off the list with down,
+or by typing anything.
+
+On an idle session "waits" and "jumps in" describe the same moment, because
+there is no running turn to wait for or jump into. Both mean run it now. The
+distinction only earns its keep while Claude is working.
 
 Every waiting message is labelled on screen, so you never guess whether a
 marker registered. Labels never reach Claude:

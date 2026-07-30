@@ -235,6 +235,57 @@ try:
 finally:
     lab.stop()
 
+# =====================================================================  E
+clear_saved_queue()
+print("\n=== E: reading is free, changing holds, ctrl+enter releases ===")
+CTRL_ENTER = b"\x1b[13;5u"
+lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.start()
+try:
+    # reading the queue must NOT stop it draining
+    lab.send(busy_for(22), label="busy")
+    time.sleep(2)
+    lab.send("q say ALPHA and nothing else", label="q1")
+    lab.send("q say BETA and nothing else", label="q2")
+    lab._pump(2)
+    lab.key("up")          # read only, change nothing
+    lab._pump(1.0)
+    drained = False
+    for _ in range(60):
+        lab._pump(3)
+        if not qrows(lab):
+            drained = True
+            break
+    check("E1. reading the queue does not stop it draining", drained,
+          str(qrows(lab)))
+finally:
+    lab.stop()
+
+clear_saved_queue()
+lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.start()
+try:
+    lab.send("p say ZEBRA and nothing else", label="park")
+    lab._pump(6)
+    lab.key("up")
+    lab._pump(1.0)
+    lab.write(RIGHT)       # paused -> waits, this holds the queue
+    lab._pump(2.0)
+    check("E2. the arrow moved it to [waits]",
+          any("[waits]" in r for r in qrows(lab)), str(qrows(lab)))
+    lab._pump(10)
+    check("E3. changing a mode holds it", any("[waits]" in r for r in qrows(lab)))
+    lab.write(CTRL_ENTER)
+    ran = False
+    for _ in range(20):
+        lab._pump(3)
+        if "ZEBRA" in lab.screen() and not qrows(lab):
+            ran = True
+            break
+    check("E4. ctrl+enter releases it and it runs", ran, str(qrows(lab)))
+finally:
+    lab.stop()
+
 clear_saved_queue()
 print("\n" + ("FAILED: " + "; ".join(fails) if fails else "ALL EDGE CASES PASSED"))
 sys.exit(1 if fails else 0)
