@@ -652,6 +652,16 @@ def _install_reorder(m):
     So this only asks the queue to move something. It answers false when
     nothing is highlighted, which is what keeps every other text input in the
     app unaffected by the key.
+
+    The run gesture also lifts the hold a resumed session puts on the messages
+    it brought back. That hold exists so a queue saved yesterday cannot start
+    running because you opened a terminal, and it is released by you sending
+    something, on the reasoning that sending is the one act that certainly
+    means you are back. Pressing a key while pointing at one specific message
+    means it just as certainly, and without this the release did nothing at
+    all for exactly the messages most likely to need it: a restored row moved
+    off paused, which is where Mounssif found it. Stepping off the list is
+    deliberately not enough, because that can be the tail end of browsing.
     """
     return m.group(0) + (
         ",__qsRe=globalThis.__qsReorder=(__qsd)=>{{"
@@ -670,7 +680,7 @@ def _install_reorder(m):
         ",__qsRn=globalThis.__qsRun=()=>{{"
         "let __qsi={ht}.getState().queueEditIndex;"
         "if(__qsi===null||__qsi===void 0)return!1;"
-        "{lr}(null);return!0}}"
+        "globalThis.__qsHold=void 0;{lr}(null);return!0}}"
     ).format(ht=m.group("ht"), lr=m.group("lr"))
 
 

@@ -206,6 +206,14 @@ in a good way.
 Let go with ctrl and enter to run it now, by stepping off the list with down,
 or by typing anything.
 
+A resumed session holds the messages it brought back until you do something
+deliberate, so that a queue saved yesterday cannot start running because you
+opened a terminal. Sending anything has always released that hold. Ctrl and
+enter releases it as well, on the same reasoning: a key pressed while pointing
+at one specific message says you are here and you mean this one. Stepping off
+the list is deliberately not enough, because that can be the tail end of
+browsing.
+
 On an idle session "waits" and "jumps in" describe the same moment, because
 there is no running turn to wait for or jump into. Both mean run it now. The
 distinction only earns its keep while Claude is working.

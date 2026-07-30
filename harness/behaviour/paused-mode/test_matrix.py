@@ -286,6 +286,46 @@ try:
 finally:
     lab.stop()
 
+# =====================================================================  F
+clear_saved_queue()
+print("\n=== F: a RESTORED message, cycled, then released ===")
+CTRL_ENTER = b"\x1b[13;5u"
+lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.start()
+try:
+    lab.send("p say OMEGA and nothing else", label="park")
+    lab._pump(6)
+finally:
+    lab.stop()
+
+time.sleep(2)
+lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.start()
+try:
+    lab._pump(8)
+    check("F1. it came back restored and paused",
+          any("[paused, restored]" in r for r in qrows(lab)), str(qrows(lab)))
+    lab.key("up")
+    lab._pump(1.0)
+    lab.write(RIGHT)
+    lab._pump(2.0)
+    check("F2. the arrow moved it to waits",
+          any("[waits" in r for r in qrows(lab)), str(qrows(lab)))
+    lab._pump(8)
+    check("F3. still held, nothing ran on its own",
+          any("[waits" in r for r in qrows(lab)))
+    lab.write(CTRL_ENTER)
+    ran = False
+    for _ in range(20):
+        lab._pump(3)
+        if "OMEGA" in lab.screen() and not qrows(lab):
+            ran = True
+            break
+    check("F4. ctrl+enter releases a RESTORED message and it runs",
+          ran, str(qrows(lab)))
+finally:
+    lab.stop()
+
 clear_saved_queue()
 print("\n" + ("FAILED: " + "; ".join(fails) if fails else "ALL EDGE CASES PASSED"))
 sys.exit(1 if fails else 0)

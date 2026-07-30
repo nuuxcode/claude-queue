@@ -95,6 +95,12 @@ which is what lets you cycle past `waits` to reach `jumps in` without it
 firing on the way. Let go with **ctrl and enter** to run it now, or by
 stepping off the list with down, or by typing anything.
 
+Messages brought back from a previous session are held harder: they read
+`[waits, restored]` and will not run just because you opened a terminal.
+**Ctrl and enter releases those too**, because pressing a key while pointing
+at one message says you are here and you mean it. Stepping off the list does
+not, since that can be the tail end of browsing.
+
 On an idle session `waits` and `jumps in` mean the same thing, because there
 is no running turn to wait for or jump into. Both mean run it now.
 
