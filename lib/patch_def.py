@@ -192,25 +192,45 @@ def _no_turn_for_paused(m):
     left the indicator spinning on an empty queue, which is what ruled out the
     queue as its source and left the clock.
 
-    The test has to be the whole submission rather than its first line,
-    because a batch that mixes a paused line with a runnable one does start a
-    turn, and skipping the clock there would break the honest case to fix the
-    dishonest one.
+    The test has to read the submission exactly the way the resolver does,
+    not merely look at its first line. A batch that mixes a paused line with a
+    runnable one really does start a turn, and skipping the clock there would
+    break the honest case to fix the dishonest one. So this groups the lines
+    the same way: a marked line starts a message, an unmarked line continues
+    the one above it, and an unmarked line before any marker is a message at
+    your default. Only when every message that comes out of that is paused is
+    the clock skipped.
+
+    It also has to honour the paste rule, because the two disagree about what
+    a marker is. Typed text accepts "p ..." and "p: ..."; pasted text accepts
+    only the colon form, so pasted "p alo" is literal and really does run. The
+    list of recent pastes is still on hand at this point, which is what makes
+    the two able to agree.
     """
     return (
         "if({wf}(({js})=>{js}+1),{dr}.clearBuffer(),{oue}.current=!1,"
         '!{jn}&&{ih}==="prompt"&&!{oe}.isRemoteMode)'
         "(globalThis.__qsAllPaused??=(__qt)=>{{"
-        "let __ql=String(__qt||\"\").split(`\\n`)"
-        ".filter((__qa)=>__qa.trim());"
-        "return __ql.length>0&&__ql.every((__qa)=>{{"
-        "let __qm=/^p(?::|\\s)\\s*/i.exec(__qa);"
-        "return !!(__qm&&__qa.slice(__qm[0].length).trim())}})}})"
+        "let __qs=String(__qt||\"\"),__qa=globalThis.__qsPastes,"
+        "__qpaste=Array.isArray(__qa)&&__qa.some((__qb)=>"
+        "typeof __qb===\"string\"&&__qb&&__qs.includes(__qb)),"
+        "__qm=__qpaste?{paste_marker}:{marker},"
+        "__ql=__qs.split(`\\n`),__qn=__ql.find((__qb)=>__qb.trim()),"
+        "__qbat=!__qpaste||!!(__qn&&{paste_marker}.test(__qn));"
+        "if(!__qbat)return!1;"
+        "let __qf=(__qb)=>{{let __qc=__qm.exec(__qb);"
+        "return __qc&&__qb.slice(__qc[0].length).trim()?__qc:null}};"
+        "if(!__ql.some(__qf))return!1;"
+        "let __qx=[];"
+        "__ql.forEach((__qb)=>{{let __qc=__qf(__qb);"
+        "if(__qc)__qx.push(__qc[1][0].toLowerCase());"
+        "else if(!__qx.length&&__qb.trim())__qx.push(\"*\")}});"
+        "return __qx.length>0&&__qx.every((__qb)=>__qb===\"p\")}})"
         "({yt})||({oh}({yt}),{oo}())"
     ).format(wf=m.group("wf"), js=m.group("js"), dr=m.group("dr"),
              oue=m.group("oue"), jn=m.group("jn"), ih=m.group("ih"),
              oe=m.group("oe"), oh=m.group("oh"), yt=m.group("yt"),
-             oo=m.group("oo"))
+             oo=m.group("oo"), marker=MARKER, paste_marker=PASTE_MARKER)
 
 
 def _queue_when_paused(m):
