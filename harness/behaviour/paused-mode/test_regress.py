@@ -8,6 +8,7 @@ counted as work) and the browsing hold (nothing drains while you point at the
 queue). Each of those sits underneath behaviour that shipped, so this drives
 the shipped behaviour rather than the new feature.
 """
+import glob
 import os
 import sys
 import time
@@ -17,6 +18,17 @@ from lab import Lab, busy_for  # noqa: E402
 
 LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 fails = []
+
+
+def clear_saved_queue_at_start():
+    """A queue file left by an earlier run restores rows into this one and
+    every count in here is then measuring the wrong session."""
+    d = os.path.expanduser("~/Developer/_claude-lab/workspace/.claude")
+    for f in glob.glob(os.path.join(d, "queue-*.json")):
+        os.remove(f)
+
+
+clear_saved_queue_at_start()
 
 
 def check(name, ok, detail=""):

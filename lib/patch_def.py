@@ -176,6 +176,43 @@ def _resolve(m):
     return pre + m.group(0)
 
 
+def _no_turn_for_paused(m):
+    """Do not start a turn for a submission that is entirely paused.
+
+    The prompt box begins the visible part of a turn before anything has
+    decided what the message is: it stamps a turn start time, which is what
+    draws the working indicator and the seconds counting up beside it. For
+    every other message that is right, because a turn really is about to
+    begin. A paused message never begins one, so the indicator had nothing to
+    end it and span forever over an idle session.
+
+    Driven to be sure of the cause rather than guessing at it: the message
+    itself never reached the model, no transcript was written after a minute,
+    and the footer never offered "esc to interrupt". Deleting the paused row
+    left the indicator spinning on an empty queue, which is what ruled out the
+    queue as its source and left the clock.
+
+    The test has to be the whole submission rather than its first line,
+    because a batch that mixes a paused line with a runnable one does start a
+    turn, and skipping the clock there would break the honest case to fix the
+    dishonest one.
+    """
+    return (
+        "if({wf}(({js})=>{js}+1),{dr}.clearBuffer(),{oue}.current=!1,"
+        '!{jn}&&{ih}==="prompt"&&!{oe}.isRemoteMode)'
+        "(globalThis.__qsAllPaused??=(__qt)=>{{"
+        "let __ql=String(__qt||\"\").split(`\\n`)"
+        ".filter((__qa)=>__qa.trim());"
+        "return __ql.length>0&&__ql.every((__qa)=>{{"
+        "let __qm=/^p(?::|\\s)\\s*/i.exec(__qa);"
+        "return !!(__qm&&__qa.slice(__qm[0].length).trim())}})}})"
+        "({yt})||({oh}({yt}),{oo}())"
+    ).format(wf=m.group("wf"), js=m.group("js"), dr=m.group("dr"),
+             oue=m.group("oue"), jn=m.group("jn"), ih=m.group("ih"),
+             oe=m.group("oe"), oh=m.group("oh"), yt=m.group("yt"),
+             oo=m.group("oo"))
+
+
 def _queue_when_paused(m):
     """A paused message goes to the queue even when nothing is running.
 
@@ -1164,6 +1201,17 @@ after it in their saved order.
                 r"preExpansionValue:(?P=cmd)\.preExpansionValue\?\.trim\(\)\}\)"
             ),
             _priority,
+        ),
+        Edit(
+            "no turn clock for a submission that only pauses",
+            re.compile(
+                r'if\((?P<wf>\w+)\(\((?P<js>\w+)\)=>(?P=js)\+1\),'
+                r'(?P<dr>\w+)\.clearBuffer\(\),(?P<oue>\w+)\.current=!1,'
+                r'!(?P<jn>\w+)&&(?P<ih>\w+)==="prompt"'
+                r'&&!(?P<oe>\w+)\.isRemoteMode\)'
+                r'(?P<oh>\w+)\((?P<yt>\w+)\),(?P<oo>\w+)\(\)'
+            ),
+            _no_turn_for_paused,
         ),
         Edit(
             "a paused message queues even when nothing is running",

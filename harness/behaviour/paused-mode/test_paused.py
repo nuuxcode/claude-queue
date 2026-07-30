@@ -9,6 +9,7 @@ Four claims, each checked on the rendered screen rather than on the stream:
   3. left and right cycle the highlighted message through the three modes
   4. a message cycled off paused runs like any other queued message
 """
+import glob
 import os
 import sys
 import time
@@ -20,6 +21,17 @@ LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
 LEFT, RIGHT = b"\x1b[D", b"\x1b[C"
 
 fails = []
+
+
+def clear_saved_queue_at_start():
+    """A queue file left by an earlier run restores rows into this one and
+    every count in here is then measuring the wrong session."""
+    d = os.path.expanduser("~/Developer/_claude-lab/workspace/.claude")
+    for f in glob.glob(os.path.join(d, "queue-*.json")):
+        os.remove(f)
+
+
+clear_saved_queue_at_start()
 
 
 def check(name, ok, detail=""):
