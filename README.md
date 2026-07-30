@@ -36,19 +36,27 @@ An optional label at the start of the message tells Claude Queue what you mean:
 run the migration     no label: waits for the current job to finish
 s check the logs      start with "s ": jumps in at the next safe moment
 q run the migration   start with "q ": waits, said out loud
+p rewrite the docs    start with "p ": parked, never runs until you say so
 ```
 
 These are message prefixes, not live keyboard shortcuts. You write and submit
 the whole message. A normal message waits by default. Start the submitted
-message with `s ` only when you want it to steer the running turn, or `q ` when
-you want to say "wait" explicitly. Pressing `s` or `q` elsewhere does nothing
-to the running turn, and the prefix is removed before Claude sees the message.
-The screen labels the result as `[waits]` or `[jumps in]`.
+message with `s ` only when you want it to steer the running turn, `q ` when
+you want to say "wait" explicitly, or `p ` when you want to park the thought
+without running it at all. Pressing `s`, `q` or `p` elsewhere does nothing to
+the running turn, and the prefix is removed before Claude sees the message.
+The screen labels the result as `[waits]`, `[jumps in]` or `[paused]`.
 
 The waiting ones sit in a list you can see. Reorder them, edit one without
-touching the rest, delete one you changed your mind about. Each runs as its
-own job, in your order. Claude Code crashes or you close the terminal, the
-queue is still there when you come back.
+touching the rest, delete one you changed your mind about, or press left and
+right to change what a message is going to do. Each runs as its own job, in
+your order. Claude Code crashes or you close the terminal, the queue is still
+there when you come back.
+
+**A parked message is the one that never surprises you.** It sits in the list
+like any other, and nothing that picks work will take it: not the current
+turn, not the end of the turn, not a restart. Point at it and press left or
+right when you are ready for it to mean something.
 
 Nothing here fights the tool: Claude Code already has a queue inside it. This
 patch gives you the controls.
@@ -73,11 +81,16 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | `fix the tests` | waits for the current job to finish |
 | `s fix the tests` | jumps in while the job keeps running |
 | `q fix the tests` | waits, labelled on screen |
+| `p fix the tests` | parked: sits in the list and never runs until you change it |
 | **tab** instead of enter | the opposite of your default, no letter needed |
 | up / down | move through the waiting list |
 | enter on a waiting message | pull it back to edit alone, send returns it to its slot |
 | shift + up / down | move it earlier or later |
+| left / right | change what it will do: waits, jumps in, paused, and round again |
 | delete | remove it, only while the editor is empty |
+
+While you are pointing at a message in the list, nothing drains. Step off it
+with down, or type anything, and the queue carries on.
 
 Coming from Codex? `export CLAUDE_QUEUE_DEFAULT=steer` gives you the same
 arrangement: enter jumps in, tab queues.

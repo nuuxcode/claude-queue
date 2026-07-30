@@ -29,10 +29,13 @@ s check the logs      "s" steers: jumps in at
                       the next tool call
 q run the migration   "q" queues: waits,
                       said out loud
+p rewrite the docs    "p" parks it: never runs
+                      until you change it
 ```
 
 Waiting messages stack up in a list you can see. You can reorder them, edit any
-one alone, or delete one. Each runs as its own turn, in the order you typed.
+one alone, delete one, or change what one of them is going to do. Each runs as
+its own turn, in the order you typed.
 
 **The guarantee, in one line:** how long a tool takes cannot change which of
 your messages wait and which jump in. That is decided when you press enter, not
@@ -164,13 +167,23 @@ never anything new. With `--no-path` you re-apply after updates yourself with
 | `fix the tests` (no marker) | after the current turn finishes |
 | `q fix the tests` or `q: ...` | after the current turn finishes, said explicitly |
 | `s fix the tests` or `s: ...` | at the next tool boundary, while the job is still running |
+| `p fix the tests` or `p: ...` | never, until you give it another mode |
 | **tab** instead of enter | the opposite timing to your default, no marker needed |
 
-Markers need a space or colon after the letter, so `start the server` and
-`queueing jobs` are ordinary text, and so are the words `queue` and `steer`.
-A paste is literal unless its first nonblank line starts with `q:` or `s:`,
-so `q = deque()` and `q4 roadmap items:` arrive untouched. To send a message
-that really starts with `q`, type one space first.
+Markers need a space or colon after the letter, so `start the server`,
+`print the totals` and `queueing jobs` are ordinary text, and so are the words
+`queue` and `steer`. A paste is literal unless its first nonblank line starts
+with `q:`, `s:` or `p:`, so `q = deque()`, `p = Path(x)` and `q4 roadmap
+items:` arrive untouched. To send a message that really starts with `q`, type
+one space first.
+
+A parked message is queued and never chosen. Claude Code ranks queued work
+with a small table, and every place that picks something to run compares
+against it: the mid-turn fold, the peek and the dequeue. Parked messages carry
+a rank that table does not contain, and a missing rank loses every comparison,
+so all three skip it without a new gate anywhere in the running path. It
+cannot leak into a turn by accident, it survives as many turns as you like,
+and it comes back parked after a restart.
 
 **Managing the waiting list:**
 
@@ -179,7 +192,14 @@ that really starts with `q`, type one space first.
 | up / down | move the highlight through the waiting messages |
 | enter | pull the highlighted one back into the editor, alone; sending returns it to its slot |
 | shift+up / shift+down | move it earlier or later, highlight travels with it |
+| left / right | change its mode: waits, jumps in, paused, and round again |
 | delete / backspace | remove it, **only while the editor is empty** |
+
+Nothing drains while a message is highlighted. That is what makes changing a
+mode usable rather than a race: without it, moving a parked message onto
+"waits" in an idle session ran it on the way past, so the third mode could
+never be reached. Step off the list with down, or type anything, and the queue
+carries on where it left off.
 
 Every waiting message is labelled on screen, so you never guess whether a
 marker registered. Labels never reach Claude:
