@@ -4,6 +4,7 @@ claude-queue: type your next instruction without derailing the running one.
     <text>        waits until the current turn finishes  (the default)
     s <text>      jumps in at the next tool boundary     (stock behaviour)
     q <text>      waits, said explicitly
+    p <text>      parked: sits in the queue and never runs until you say so
 
     CLAUDE_QUEUE_DEFAULT=steer    puts the stock behaviour back as the default
     CLAUDE_QUEUE_DRAIN=all        waiting messages all run in one turn instead
@@ -26,7 +27,14 @@ While messages are waiting:
     up / down                     move the highlight through them
     enter                         pull the highlighted one back to edit
     shift+up / shift+down         move it earlier or later in the queue
+    left / right                  change what it will do: waits, jumps in,
+                                  paused, and round again
     delete / backspace            remove it, when the editor is empty
+
+A paused message is the one that never surprises you. It is queued, drawn and
+editable like any other, and no path that picks work will take it, so it waits
+there through as many turns as you like. Point at it and press left or right to
+give it a mode that runs.
 
 Waiting messages survive a restart. Every change to the queue is written to
 this project's .claude directory, in a file named for the session, and the next
@@ -77,8 +85,20 @@ from ccpatch import Edit, Patch, PatchError, main  # noqa: E402
 # silently eating the first word of "Queue depth is high" is worse than losing
 # two redundant aliases. Pasted multi-job batches use the colon-only form so
 # ordinary pasted code such as ``q = deque()`` stays literal.
-MARKER = r"/^(q|s)(?::|\s)\s*/i"
-PASTE_MARKER = r"/^(q|s):\s*/i"
+MARKER = r"/^(q|s|p)(?::|\s)\s*/i"
+PASTE_MARKER = r"/^(q|s|p):\s*/i"
+
+# q waits, s jumps in, p is parked and never runs until you change it.
+PRI_OF_MARKER = '(__qa)=>__qa==="q"?"later":__qa==="p"?"paused":"next"'
+
+# "paused" is deliberately not a key in Claude Code's own priority table
+# {now:0,next:1,later:2}. Every place that chooses a command to run compares
+# that table's value, and a missing key compares false against everything:
+# the mid-turn fold asks `table[p] <= table["next"]`, and both peek and dequeue
+# scan for `table[p] < Infinity`. So a paused message is skipped by all three
+# without a single new gate in the running path. It stays in the queue, drawn
+# and editable, until you give it a priority that means something.
+PAUSED = "paused"
 
 # The default when you type no marker. "later" means wait for the end of the
 # turn. Set CLAUDE_QUEUE_DEFAULT=steer to get stock behaviour back.
@@ -120,7 +140,8 @@ def _resolve(m):
     """
     pre = (
         "globalThis.__qsHold=void 0;"
-        "let __qsp={default_expr},__qsx=null,__qsi=globalThis.__qsInvert,"
+        "let __qsp={default_expr},__qsx=null,__qsf=null,"
+        "__qsPri={pri_of},__qsi=globalThis.__qsInvert,"
         "__qsa=globalThis.__qsPastes;"
         "globalThis.__qsInvert=void 0;globalThis.__qsPastes=void 0;"
         "if(typeof __qsi===\"string\"&&__qsi==={val}){{"
@@ -137,7 +158,7 @@ def _resolve(m):
         "__qsx=[];"
         "__qsl.forEach((__qa)=>{{let __qb=__qsf(__qa);"
         "if(__qb)__qsx.push({{v:__qa.slice(__qb[0].length).trim(),"
-        'p:__qb[1][0].toLowerCase()==="q"?"later":"next"}});'
+        "p:__qsPri(__qb[1][0].toLowerCase())}});"
         "else if(__qsx.length)__qsx[__qsx.length-1].v+=`\\n`+__qa;"
         "else if(__qa.trim())__qsx.push({{v:__qa,p:__qsp}});}});"
         "__qsx=__qsx.map((__qy)=>({{...__qy,v:__qy.v.replace(/\\s+$/,\"\")}}))"
@@ -151,8 +172,36 @@ def _resolve(m):
         "}}}}"
     ).format(mode=m.group("mode"), val=m.group("val"), raw=m.group("raw"),
              marker=MARKER, paste_marker=PASTE_MARKER,
-             default_expr=DEFAULT_EXPR)
+             default_expr=DEFAULT_EXPR, pri_of=PRI_OF_MARKER)
     return pre + m.group(0)
+
+
+def _queue_when_paused(m):
+    """A paused message goes to the queue even when nothing is running.
+
+    Submitting while Claude is idle skips the queue entirely: the message
+    becomes the turn and runs. That is right for every other mode and wrong for
+    this one, because the whole point of a paused message is that it does not
+    run until you say so.
+
+    Rather than teach the idle path to hold something back, this widens the
+    test for "this belongs in the queue". The branch it joins already enqueues
+    with the resolved priority, clears the editor, and reports the message as
+    queued, so a paused message typed into an idle session takes exactly the
+    same path as one typed into a busy one, and there is no second version of
+    that code to keep in step.
+
+    A mixed batch is not covered here on purpose. If any line is runnable the
+    submission is still a real turn, so it goes down the idle path and the
+    split below picks the first runnable line to run.
+    """
+    return (
+        'if({r}.isActive||{n}||__qsp==="{paused}"'
+        '||__qsx&&__qsx.every((__qy)=>__qy.p==="{paused}")){{'
+        'if({o}!=="prompt"&&{o}!=="bash"){{'
+        '{pe}("prompt_queued","mode_not_queueable");return}}'
+    ).format(r=m.group("r"), n=m.group("n"), o=m.group("o"), pe=m.group("pe"),
+             paused=PAUSED)
 
 
 def _remember_paste(m):
@@ -203,12 +252,14 @@ def _idle_split(m):
     """
     return (
         'be("prompt_submit"),'
-        "__qsx&&__qsx.slice(1).forEach((__qy)=>xT({{...{j},value:__qy.v,"
-        "preExpansionValue:void 0,priority:__qy.p}})),"
+        '__qsf=__qsx?__qsx.find((__qy)=>__qy.p!=="{paused}")??__qsx[0]:null,'
+        "__qsx&&__qsx.forEach((__qy)=>{{if(__qy!==__qsf)"
+        "xT({{...{j},value:__qy.v,preExpansionValue:void 0,"
+        "priority:__qy.p}})}}),"
         "await {fn}({{inputSource:{a},queuedCommands:["
-        "__qsx?{{...{j},value:__qsx[0].v,preExpansionValue:void 0,"
-        "...__qsx[0].p?{{priority:__qsx[0].p}}:{{}}}}:{j}],"
-    ).format(fn=m.group("fn"), a=m.group("a"), j=m.group("j"))
+        "__qsf?{{...{j},value:__qsf.v,preExpansionValue:void 0,"
+        "...__qsf.p?{{priority:__qsf.p}}:{{}}}}:{j}],"
+    ).format(fn=m.group("fn"), a=m.group("a"), j=m.group("j"), paused=PAUSED)
 
 def _tab_names(js):
     """The submit callback and the just-submitted flag, found by shape."""
@@ -258,9 +309,10 @@ def _no_abort(m):
     it is unreachable, but the event and its schema exist. If it is ever turned
     on, a waiting message would abort the very turn it was told to wait for.
     """
-    return 'if({e}.hasInterruptibleToolInProgress&&__qsp!=="later"){{{log}'.format(
-        e=m.group("e"), log=m.group("log")
-    )
+    return (
+        'if({e}.hasInterruptibleToolInProgress&&__qsp!=="later"'
+        '&&__qsp!=="{paused}"){{{log}'
+    ).format(e=m.group("e"), log=m.group("log"), paused=PAUSED)
 
 
 def _one_at_a_time(m):
@@ -448,11 +500,13 @@ def _keep_marker(m):
         "let {c}={arr}.filter({ed})[{i}];if(!{c})return;"
         'let __qd=process.env.CLAUDE_QUEUE_DEFAULT==="steer"?"next":"later";'
         'let __qm={c}.priority&&{c}.priority!==__qd'
-        '?({c}.priority==="later"?"q ":"s "):"";'
+        '?({c}.priority==="later"?"q ":'
+        '{c}.priority==="{paused}"?"p ":"s "):"";'
         "let {v}=__qm+{raw}({c}.value),"
     ).format(fn=m.group("fn"), i=m.group("i"), cur=m.group("cur"),
              off=m.group("off"), c=m.group("c"), arr=m.group("arr"),
-             ed=m.group("ed"), v=m.group("v"), raw=m.group("raw"))
+             ed=m.group("ed"), v=m.group("v"), raw=m.group("raw"),
+             paused=PAUSED)
 
 
 def _move_fn(m, js):
@@ -494,7 +548,17 @@ def _move_fn(m, js):
         "if(__qa<0)return!1;"
         "{arr}.splice(__qa,1),{notify}();"
         "return!0}};"
-    ).format(arr=m.group("arr"), ed=n["editable"], notify=n["notify"]) + m.group(0)
+        "globalThis.__qsSetMode=function(__qi,__qd){{"
+        "let __qe={arr}.filter({ed}),__qc=__qe[__qi];"
+        "if(!__qc||__qd!==1&&__qd!==-1)return!1;"
+        'let __qm=["later","next","{paused}"],'
+        '__qk=__qm.indexOf(__qc.priority??"next");'
+        "if(__qk<0)__qk=0;"
+        "__qc.priority=__qm[(__qk+__qd+__qm.length)%__qm.length];"
+        "{notify}();return!0}};"
+        "globalThis.__qsPoke={notify};"
+    ).format(arr=m.group("arr"), ed=n["editable"], notify=n["notify"],
+             paused=PAUSED) + m.group(0)
 
 
 def _shift_arrows(m):
@@ -540,7 +604,64 @@ def _install_reorder(m):
         "let __qsi={ht}.getState().queueEditIndex;"
         "if(__qsi===null||__qsi===void 0)return!1;"
         "return globalThis.__qsDrop?.(__qsi)===!0}}"
+        ",__qsMd=globalThis.__qsMode=(__qsd)=>{{"
+        "let __qsi={ht}.getState().queueEditIndex;"
+        "if(__qsi===null||__qsi===void 0)return!1;"
+        "return globalThis.__qsSetMode?.(__qsi,__qsd)===!0}}"
     ).format(ht=m.group("ht"))
+
+
+def _mode_arrows(m):
+    """Left and right change what the highlighted message is going to do.
+
+    The cycle is one loop in both directions, waits -> jumps in -> paused, so
+    the two keys are opposites and neither is a dead end.
+
+    The guard is the same one the delete key uses: the editor has to be empty
+    and a queued message has to be highlighted. Both are already true whenever
+    you are walking the queue, because typing anything clears the highlight,
+    and both keys already do nothing on an empty line, so this takes no
+    behaviour away from the text editor.
+
+    It sits after the modified-key branches so ctrl, meta, fn and super keep
+    their word-and-line movement untouched, and before the left arrow's own
+    detach gesture, which is the one thing this genuinely shadows. That is a
+    deliberate trade: the gesture needs an empty editor, and so does this, but
+    this also needs a message highlighted, which only happens after you press
+    up. Inside the queue, the arrows belong to the queue.
+    """
+    return (
+        'case"{key}":if({k}.superKey)return {w}.{home}();'
+        "if({k}.ctrl||{k}.meta||{k}.fn)return {w}.{word}();"
+        "if(!{k}.shift&&!{w}.text&&globalThis.__qsMode?.({dir}))return;"
+    ).format(key=m.group("key"), k=m.group("k"), w=m.group("w"),
+             home=m.group("home"), word=m.group("word"),
+             dir="1" if m.group("key") == "right" else "-1")
+
+
+def _work_only(m):
+    """A paused message is not work, so it must not make the session look busy.
+
+    Two questions in the queue module mean "is there anything to do": the main
+    thread's queue length, which decides whether the session is busy, and
+    whether the queue has anything in it at all. Both count rows, and a paused
+    row is a row, so a queue holding nothing but paused messages reported a
+    busy session that never finished and a drain that never had anything to
+    drain.
+
+    Answering both from the runnable rows only is the honest fix, and it is one
+    place rather than every caller. The drawing side is untouched, so a paused
+    message is still listed, still walkable, still editable. It has simply
+    stopped claiming to be pending work, which is exactly what pausing it
+    meant.
+    """
+    return (
+        'function {x}(){{return {pr}({arr}.filter('
+        '(__qc)=>__qc.priority!=="{paused}"),{qh})}}'
+        'function {o}(){{return {arr}.some('
+        '(__qc)=>__qc.priority!=="{paused}")}}'
+    ).format(x=m.group("x"), pr=m.group("pr"), arr=m.group("arr"),
+             qh=m.group("qh"), o=m.group("o"), paused=PAUSED)
 
 
 def _forget_slot(m):
@@ -588,11 +709,27 @@ def _follow_message(m):
     moves with the message when you reorder it, and it clears when the message
     you were pointing at is gone. The old clamp stays as the fallback for the
     one case identity cannot answer, a message that left while you were on it.
+
+    This effect is also the one place that always knows where the highlight
+    is, so it publishes it. Nothing drains while you are pointing at a queued
+    message, which is what makes changing a mode usable: without it, moving a
+    paused message onto "waits" in an idle session ran it on the way past, so
+    you could never reach the third mode at all.
+
+    Letting go has to wake the queue again. The drain is watching the queue,
+    not the highlight, so clearing the highlight alone would leave it asleep
+    with work sitting in front of it. On the way from a highlight to none, this
+    pokes the queue's own "something changed" call, which is the same door
+    every other queue operation knocks on. It cannot loop: the poke re-runs
+    this effect with no highlight either side, which pokes nothing.
     """
     return (
         "{cr}={hook}();"
         "let __qsQ={pi}.useRef({cr});"
         "{pi}.useEffect(()=>{{"
+        "let __qsB=globalThis.__qsSel;globalThis.__qsSel={gr};"
+        "if(({gr}===null||{gr}===void 0)"
+        "&&__qsB!==null&&__qsB!==void 0)globalThis.__qsPoke?.();"
         "let __qsP=__qsQ.current;__qsQ.current={cr};"
         "if({gr}===null)return;"
         "let __qsE={cr}.filter({ed});"
@@ -683,11 +820,13 @@ def _label(m):
         'if({arg}.mode==="prompt"&&typeof {v}==="string"'
         '&&process.env.CLAUDE_QUEUE_LABELS!=="off"){{'
         'let __qsr={arg}.restored===!0?", restored":"";'
-        'if({arg}.priority==="later"){v}="[waits"+__qsr+"] "+{v};'
+        'if({arg}.priority==="{paused}"){v}="[paused"+__qsr+"] "+{v};'
+        'else if({arg}.priority==="later"){v}="[waits"+__qsr+"] "+{v};'
         'else if({arg}.priority==="next"){v}="[jumps in"+__qsr+"] "+{v};'
         "}}"
         "return {mk}({{content:{v}}})}}"
-    ).format(fn=m.group("fn"), arg=m.group("arg"), v=m.group("v"), mk=m.group("mk"))
+    ).format(fn=m.group("fn"), arg=m.group("arg"), v=m.group("v"),
+             mk=m.group("mk"), paused=PAUSED)
 
 
 def _fold_fn(m):
@@ -873,7 +1012,8 @@ def _persist(m, js):
         "__qr={arr}.filter({ed}).filter((__qc)=>"
         '__qc.mode==="prompt"&&typeof __qc.value==="string"'
         "&&__qc.value.trim()).map((__qc)=>({{value:__qc.value,"
-        'priority:__qc.priority==="next"?"next":"later",'
+        'priority:__qc.priority==="next"?"next":'
+        '__qc.priority==="paused"?"paused":"later",'
         "restored:__qc.restored===!0}}));"
         "if(!__qr.length){{try{{__qm.unlinkSync(__qf)}}catch(__qe){{}}return}}"
         '__qm.mkdirSync(require("path").dirname(__qf),{{recursive:!0}});'
@@ -895,7 +1035,8 @@ def _persist(m, js):
         "for(let __qc of __qr){{"
         'if(!__qc||typeof __qc.value!=="string"||!__qc.value.trim())continue;'
         "{arr}.push({{agentId:{agent}(),mode:\"prompt\",value:__qc.value,"
-        'priority:__qc.priority==="next"?"next":"later",'
+        'priority:__qc.priority==="next"?"next":'
+        '__qc.priority==="paused"?"paused":"later",'
         "timestamp:new Date().toISOString(),restored:!0}});"
         "__qn++}}"
         "if(!__qn)return!1;"
@@ -932,6 +1073,8 @@ def _hold_and_restore(m):
         "if({n}||{r}.isActive)return;"
         "if({t})return;"
         "if({o}.length===0)return;"
+        'if({o}.every((__qc)=>__qc.priority==="paused"))return;'
+        "if(globalThis.__qsSel!==null&&globalThis.__qsSel!==void 0)return;"
         "if(globalThis.__qsHold)return;"
         "{call}({{executeInput:{e}}})}},["
     ).format(**m.groupdict())
@@ -960,7 +1103,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.1.0",
+    version="2.2.0-dev",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -968,6 +1111,7 @@ While Claude is working:
     write the migration notes      waits until it finishes this turn
     s check the staging logs       jumps in at the next tool call
     q write the migration notes    waits, said explicitly
+    p rewrite the changelog        parked, never runs until you change it
 
 Also accepted: "q: ..." and "s: ...". The marker is always removed before the
 text reaches Claude. Pasted text is literal unless its first nonblank line uses
@@ -978,6 +1122,7 @@ With messages waiting:
     up / down                      move the highlight through the queue
     enter                          pull the highlighted one back to edit
     shift+up / shift+down          move it earlier or later in the queue
+    left / right                   change its mode: waits, jumps in, paused
 
 A message taller than one line is drawn as its first line plus a count of the
 lines it is holding back. The highlighted one is always drawn in full.
@@ -1019,6 +1164,15 @@ after it in their saved order.
                 r"preExpansionValue:(?P=cmd)\.preExpansionValue\?\.trim\(\)\}\)"
             ),
             _priority,
+        ),
+        Edit(
+            "a paused message queues even when nothing is running",
+            re.compile(
+                r'if\((?P<r>\w+)\.isActive\|\|(?P<n>\w+)\)\{'
+                r'if\((?P<o>\w+)!=="prompt"&&(?P=o)!=="bash"\)\{'
+                r'(?P<pe>\w+)\("prompt_queued","mode_not_queueable"\);return\}'
+            ),
+            _queue_when_paused,
         ),
         Edit(
             "split when idle too: first job runs, the rest wait",
@@ -1205,7 +1359,8 @@ after it in their saved order.
             "say that you can reorder them too",
             re.compile(r'return"Press up to edit queued messages"'),
             lambda m: 'return"Press up to edit queued messages, '
-                      'shift+up/down to reorder, del to remove"',
+                      'shift+up/down to reorder, left/right to change mode, '
+                      'del to remove"',
         ),
         Edit(
             "give a message its marker back when you edit it",
@@ -1234,6 +1389,35 @@ after it in their saved order.
                 r"!!(?P<bn>\w+)\|\|(?P<len>\w+)\(\)>0\}\)"
             ),
             _not_busy_while_held,
+        ),
+        Edit(
+            "left changes the mode of the message you picked",
+            re.compile(
+                r'case"(?P<key>left)":if\((?P<k>\w+)\.superKey\)'
+                r'return (?P<w>\w+)\.(?P<home>startOfLine)\(\);'
+                r'if\((?P=k)\.ctrl\|\|(?P=k)\.meta\|\|(?P=k)\.fn\)'
+                r'return (?P=w)\.(?P<word>prevWord)\(\);'
+            ),
+            _mode_arrows,
+        ),
+        Edit(
+            "right changes the mode of the message you picked",
+            re.compile(
+                r'case"(?P<key>right)":if\((?P<k>\w+)\.superKey\)'
+                r'return (?P<w>\w+)\.(?P<home>endOfLine)\(\);'
+                r'if\((?P=k)\.ctrl\|\|(?P=k)\.meta\|\|(?P=k)\.fn\)'
+                r'return (?P=w)\.(?P<word>nextWord)\(\);'
+            ),
+            _mode_arrows,
+        ),
+        Edit(
+            "a paused message is not pending work",
+            re.compile(
+                r'function (?P<x>\w+)\(\)\{return (?P<pr>\w+)\('
+                r'(?P<arr>\w+),(?P<qh>\w+)\)\}'
+                r'function (?P<o>\w+)\(\)\{return (?P=arr)\.length>0\}'
+            ),
+            _work_only,
         ),
         # Last on purpose. It rewrites the queue's "something changed" call,
         # which is the shape three earlier edits use to find their way around
