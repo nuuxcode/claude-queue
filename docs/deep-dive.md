@@ -412,6 +412,7 @@ What happens to waiting messages when:
 
 | event | your waiting messages |
 |---|---|
+| `/model` typed while a tool is running | it QUEUES, shown as `[waits] /model`, and the picker opens when the turn ends. **Stock does the same thing**, driven side by side on 2026-07-30: an unpatched 2.1.220 also queued it and also did not open the picker. The only difference the patch makes is the label, which is stock's behaviour said out loud. A model chosen this way therefore applies from the next turn; it cannot change the turn that was running |
 | `/compact` typed while messages wait | it QUEUES, shown as `[waits] /compact`, and runs in its turn. Messages queued behind it survived the compaction and ran after it (driven with manual `/compact`; the automatic 95% compaction was not driven) |
 | Escape, editor empty | kept. The turn ends and the first one starts. Disk edits already made by the killed tool remain |
 | Escape while editing a pulled-back message | the whole queue is emptied into the editor, joined, same as stock. Nothing runs until you send again |
@@ -428,7 +429,8 @@ And the small print of the keys:
 - Shell commands (`!`) are never marker-parsed, so a command starting with
   `q` cannot be mangled.
 - Slash commands are never marker-parsed, and they differ from each other
-  while Claude works: `/status` opens straight away, `/compact` queues.
+  while Claude works: `/status` opens straight away, `/compact` and
+  `/model` queue, exactly as they do on stock.
 - Tab does nothing in stock Claude Code's prompt box, and the completion menu
   still takes it first when open, so nothing you already use is displaced.
 - A marker still wins over tab: `q ...` plus tab waits, because an explicit
