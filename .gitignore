@@ -1,0 +1,44 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Never commit anything extracted from the Claude Code binary.
+*.orig
+extracted*.js
+cli.js
+*.staged
+work/
+
+# Internal notes stay out of the public repo. Everything under docs/ is ignored
+# by default and public pages are opted in by name, so a stray note dropped in
+# there cannot leak by accident.
+docs/*.md
+!docs/behaviour.md
+!docs/why-turn-boundaries-matter.md
+!docs/the-evidence.md
+!docs/guarantees.md
+*-internal.md
+*-notes.md
+
+# Harness output: recordings are large and belong to whoever made them.
+harness/runs/
+harness/workspace-*/
+
+# Session state written by tooling. Holds working notes and prompts.
+.claude/
+
+# Behaviour-suite scratch: workspaces and captured screens the suites create as
+# they run. Regenerated every run, specific to one machine.
+harness/behaviour/__pycache__/
+harness/behaviour/*-screen.txt
+harness/behaviour/mixed-test/
+harness/behaviour/markers/
+harness/behaviour/edge-*/
+harness/behaviour/mx-*/
+harness/behaviour/ro-*/
+harness/behaviour/mg-*/
+harness/behaviour/gap-*/
+harness/behaviour/ux-*/
+harness/behaviour/workspace*/
+harness/behaviour/hd-*
+harness/behaviour/sp3-*/
