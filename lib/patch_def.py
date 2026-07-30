@@ -90,7 +90,11 @@ from ccpatch import Edit, Patch, PatchError, main  # noqa: E402
 # two redundant aliases. Pasted multi-job batches use the colon-only form so
 # ordinary pasted code such as ``q = deque()`` stays literal.
 MARKER = r"/^(q|s|p)(?::|\s)\s*/i"
-PASTE_MARKER = r"/^(q|s|p):\s*/i"
+# On a paste the bar is higher, because pasted code can begin with a letter
+# that looks like a marker. The colon form always counts. The space form counts
+# only when a letter or digit follows it, which is what separates a sentence,
+# "p Okay, so we did pass one", from an assignment, "q = deque()".
+PASTE_MARKER = r"/^(q|s|p)(?::\s*|\s+(?=[A-Za-z0-9]))/i"
 
 # q waits, s jumps in, p is parked and never runs until you change it.
 PRI_OF_MARKER = '(__qa)=>__qa==="q"?"later":__qa==="p"?"paused":"next"'
@@ -133,9 +137,24 @@ def _resolve(m):
     there was no way to queue three things where one of them needed a second
     line.
 
-    A paste with no leading colon marker is always one literal message. That
-    includes code containing lines such as ``q = deque()`` or ``s = socket()``,
-    and a paragraph followed later by something that resembles a marker.
+    A paste is held to a higher bar than typed text, because pasted code can
+    begin with a letter that looks like a marker. Two things relax it, and both
+    exist because the strict version silently ran work that was meant to be
+    parked.
+
+    The paste test asks whether the submission STARTS with something pasted,
+    not whether it merely contains it. Type "p " and paste the body after it
+    and the marker was yours, typed, so it counts. Only a paste that begins the
+    message is treated as pasted.
+
+    And a pasted marker in the space form counts when a letter or digit
+    follows it. "p Okay, so we did pass one" is a sentence; "q = deque()" is an
+    assignment, and the character after the space is what tells them apart.
+    The colon form counts either way.
+
+    Mounssif hit this with a long dictated prompt: it ran immediately with the
+    "p " still attached, because a long prompt arrives as a paste and the space
+    form was refused.
 
     It is also where restored messages are released. A resumed session holds
     everything it brought back until you send something, and this runs on every
@@ -152,7 +171,7 @@ def _resolve(m):
         '__qsp=__qsp==="later"?"next":"later"}}'
         'if({mode}==="prompt"&&typeof {val}==="string"){{'
         "let __qspaste=Array.isArray(__qsa)&&__qsa.some((__qa)=>"
-        "typeof __qa===\"string\"&&__qa&&{val}.includes(__qa)),"
+        "typeof __qa===\"string\"&&__qa&&{val}.startsWith(__qa)),"
         "__qsl={val}.split(`\\n`),__qsm=__qspaste?{paste_marker}:{marker},"
         "__qsn=__qsl.find((__qa)=>__qa.trim()),"
         "__qsbat=!__qspaste||!!(__qsn&&{paste_marker}.test(__qsn)),"

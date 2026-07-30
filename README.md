@@ -82,6 +82,7 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | `s fix the tests` | jumps in while the job keeps running |
 | `q fix the tests` | waits, labelled on screen |
 | `p fix the tests` | parked: sits in the list and never runs until you change it |
+| a long pasted `p ...` | works too. Pasted code like `q = deque()` still arrives as plain text |
 | **tab** instead of enter | the opposite of your default, no letter needed |
 | up / down | move through the waiting list |
 | enter on a waiting message | pull it back to edit alone, send returns it to its slot |

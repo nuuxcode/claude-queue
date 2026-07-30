@@ -172,10 +172,21 @@ never anything new. With `--no-path` you re-apply after updates yourself with
 
 Markers need a space or colon after the letter, so `start the server`,
 `print the totals` and `queueing jobs` are ordinary text, and so are the words
-`queue` and `steer`. A paste is literal unless its first nonblank line starts
-with `q:`, `s:` or `p:`, so `q = deque()`, `p = Path(x)` and `q4 roadmap
-items:` arrive untouched. To send a message that really starts with `q`, type
-one space first.
+`queue` and `steer`. To send a message that really starts with `q`, type one
+space first.
+
+Pasted text is held to a higher bar, because pasted code can begin with a
+letter that looks like a marker. Two things relax it:
+
+- The paste test asks whether the message **starts** with something pasted.
+  Type `p ` yourself and paste the body after it, and the marker was typed, so
+  it counts.
+- A pasted marker in the space form counts when a **letter or digit** follows
+  it. `p Okay, so we did pass one` is a sentence. `q = deque()` is an
+  assignment, and the character after the space is what tells them apart.
+
+So a long prompt pasted as `p <lots of text>` parks, while `q = deque()` and
+`p = Path(x)` still arrive untouched. The colon form always counts.
 
 A parked message is queued and never chosen. Claude Code ranks queued work
 with a small table, and every place that picks something to run compares
