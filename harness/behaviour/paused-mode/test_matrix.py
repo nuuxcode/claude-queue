@@ -194,6 +194,47 @@ try:
 finally:
     lab2.stop()
 
+# =====================================================================  D
+clear_saved_queue()
+print("\n=== D: a held queue must not claim to be busy ===")
+
+
+def indicator(lab):
+    for ln in lab.screen().splitlines():
+        st = ln.strip()
+        if len(st) < 44 and re.match(r"^\S\s+[A-Za-z][A-Za-z']*\u2026", st):
+            return st
+    return None
+
+
+lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.start()
+try:
+    lab.send("p say ZEBRA and nothing else", label="park while idle")
+    lab._pump(6)
+    lab.key("up")
+    lab._pump(1.0)
+    lab.write(RIGHT)          # paused -> waits, still pointing at it
+    lab._pump(2.0)
+    check("D1. the arrow moved it to [waits]",
+          any("[waits]" in r for r in qrows(lab)), str(qrows(lab)))
+    lab._pump(12)
+    ind = indicator(lab)
+    check("D2. no working indicator while it cannot drain", ind is None, str(ind))
+    check("D3. and it has not run", any("[waits]" in r for r in qrows(lab)))
+    for _ in range(3):
+        lab.key("down")
+        lab._pump(0.5)
+    ran = False
+    for _ in range(20):
+        lab._pump(3)
+        if "ZEBRA" in lab.screen() and not qrows(lab):
+            ran = True
+            break
+    check("D4. stepping off releases it and it runs", ran)
+finally:
+    lab.stop()
+
 clear_saved_queue()
 print("\n" + ("FAILED: " + "; ".join(fails) if fails else "ALL EDGE CASES PASSED"))
 sys.exit(1 if fails else 0)

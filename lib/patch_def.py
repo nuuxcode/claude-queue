@@ -1150,10 +1150,21 @@ def _not_busy_while_held(m):
     Nothing was actually running, so the fix is to stop claiming otherwise
     while the hold is on. The moment you send something the hold is gone and
     this reads exactly as it always did.
+
+    Pointing at the queue is the second hold, and it needed saying here too.
+    Nothing drains while a message is highlighted, so a waiting message sat
+    there being counted as work about to happen. Moving a parked message onto
+    "waits" therefore started the indicator immediately, and it ran on and on
+    over a session where, by design, nothing could start until the queue was
+    let go of. Reported by Mounssif with the counter past a minute.
+
+    So the queue only makes the session busy when the queue is actually going
+    to drain. A turn that is genuinely running still reads as busy through the
+    first two terms, which is what keeps this narrow.
     """
     return (
         "mainConversationId:{cid},mainIsBusy:{bs}||!!{bn}||"
-        "{len}()>0&&!globalThis.__qsHold}})"
+        "{len}()>0&&!globalThis.__qsHold&&globalThis.__qsSel==null}})"
     ).format(**m.groupdict())
 
 
