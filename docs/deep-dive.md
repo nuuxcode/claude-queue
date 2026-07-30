@@ -230,6 +230,19 @@ full, so up and down let you read any of them completely. Only the display is
 folded: what reaches Claude, and what comes back when you pull a message into
 the editor, is every line you typed.
 
+**A queue belongs to one session and only that session ever opens it.** The
+file is named for the session id. `--continue` and `--resume <id>` keep the
+id, so those bring the queue back. Picking a session out of the `/resume` menu
+forks it into a NEW id, so that path does not, and the file is left on disk
+rather than deleted.
+
+Restoring the newest file in the project instead, when no file matched the id,
+was the previous behaviour and it leaked: every brand new session in the same
+directory also matches "no file for my id", so it adopted whatever the last
+session left, re-keyed it, and passed it on. Three terminals in, one queue held
+every message ever parked there. `CLAUDE_QUEUE_ADOPT=on` restores that
+behaviour for anyone who wants the picker path covered and accepts the leak.
+
 **Waiting messages survive a restart.** Every change to the queue is written
 to a small file in this project's `.claude` directory, named for the session.
 Come back to that project, however you come back, and the messages return as
@@ -379,6 +392,7 @@ Each has exactly two states; the default is what you get when it is unset.
 | `CLAUDE_QUEUE_LABELS` | queued messages are tagged on screen | `off` | no tags |
 | `CLAUDE_QUEUE_COLLAPSE` | a long waiting message is folded to one line | `off` | every waiting message drawn in full, however tall |
 | `CLAUDE_QUEUE_PERSIST` | waiting messages are saved, and come back when you resume the session | `off` | nothing is written to disk and nothing is restored |
+| `CLAUDE_QUEUE_ADOPT` | a queue is only ever restored into the session that saved it | `on` | a session with no queue of its own adopts the newest one in the project, which also lets it leak between unrelated sessions |
 
 The value must match exactly, lower case; anything else leaves the default in
 place. To return to a default, `unset` the variable. Setting all five gives

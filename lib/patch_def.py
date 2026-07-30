@@ -13,6 +13,10 @@ claude-queue: type your next instruction without derailing the running one.
                                   tall, instead of folding it to one line
     CLAUDE_QUEUE_PERSIST=off      stops the queue being written to disk, so
                                   nothing comes back after a restart
+    CLAUDE_QUEUE_ADOPT=on         lets a session with no queue of its own take
+                                  the newest one in the project. Off by
+                                  default: it also leaks queues between
+                                  unrelated sessions
 
     tab <text>    sends it with the OPPOSITE timing to your default, so with
                   the stock default put back you get Codex's arrangement:
@@ -1024,27 +1028,36 @@ def _persist(m, js):
     stored command, so it survives the round trip through the file and is what
     the label reads, and it is never part of the message text.
 
-    Restoring by session id alone is not enough, and shipping it that way was a
-    bug. Resuming from the picker, which is what `/resume` and a bare `claude`
-    both open, does not continue the old session: it FORKS it, and the forked
-    session gets a new id. Driven on a real machine, the messages were saved
-    under one id, the resumed session came up under another, and its transcript
-    held no reference at all to the first, so no lookup keyed on the id could
-    ever have matched. Only `--continue` and `--resume <id>` keep the id, which
-    is exactly the path the first behaviour suite drove, which is why it passed.
+    **A queue belongs to one session and is only ever restored into that
+    session.** The file is named for the session id and nothing else opens it.
 
-    So the id is tried first, because it is the precise answer where it exists,
-    and where it finds nothing the newest queue file in THIS project's .claude
-    directory is adopted instead. Adopting rewrites the messages under the
-    session that took them and deletes the file it took them from, so they are
-    offered once rather than to every session that starts here afterwards. The
-    scan cannot leave the project directory, so a file belonging to another
-    project stays as unreachable as it was before.
+    That rule replaced a heuristic that was wrong, and the way it was wrong is
+    worth keeping written down, because the reasoning behind it still sounds
+    convincing.
 
-    The trade, stated rather than hidden: two sessions live in one project, and
-    the second can adopt the first's file. Nothing runs from it, the rows say
-    restored, and deleting them is one key each. The first session rewrites its
-    file on its next queue change.
+    Resuming from the picker does not continue a session, it FORKS it, and the
+    fork gets a new id. Only `--continue` and `--resume <id>` keep the id. So a
+    lookup by id alone loses the queue on the picker path, and the fix looked
+    obvious: if no file matches my id, adopt the newest one in this project.
+
+    It leaked. "No file matches my id" is also true of every brand new session,
+    so a fresh `claude` in the same directory adopted whatever the last session
+    left, rewrote it under its own id, and passed it on again. Mounssif drove
+    it on 2026-07-30: session one parked a message, a new session showed it as
+    restored, that session parked a second, and a third came up holding both.
+    One file, both messages, re-keyed each time and following every new session
+    forever. It affected waiting and steering messages exactly as much as
+    parked ones; parked ones only made it obvious, because they never drain.
+
+    Following the fork properly is not cheap enough to do at startup. The chain
+    is there, the fork's first record carries a parentUuid pointing at the last
+    message of its parent, but resolving it means searching the project's
+    transcripts for that uuid, and in this project one of them is 123 MB.
+
+    So the picker path loses its queue, and that is stated rather than hidden.
+    The file stays on disk; nothing is deleted. `CLAUDE_QUEUE_ADOPT=on` puts
+    the old behaviour back for anyone who wants it, with the leak that comes
+    with it.
     """
     n = _queue_names(js)
     s = _session_names(js)
@@ -1103,7 +1116,8 @@ def _persist(m, js):
         "let __qf=__qsPath();"
         "if(!__qf)return!1;"
         "let __qa=null,__qr=__qsRead(__qf);"
-        "if(!__qr&&(__qa=__qsNewest(__qf)))__qr=__qsRead(__qa);"
+        'if(!__qr&&process.env.CLAUDE_QUEUE_ADOPT==="on"'
+        "&&(__qa=__qsNewest(__qf)))__qr=__qsRead(__qa);"
         "if(!__qr)return!1;"
         "let __qn=0;"
         "for(let __qc of __qr){{"
@@ -1222,6 +1236,8 @@ after it in their saved order.
     export CLAUDE_QUEUE_DRAIN=all        waiting messages all run in one turn
     export CLAUDE_QUEUE_COLLAPSE=off     draw long waiting messages in full
     export CLAUDE_QUEUE_PERSIST=off      never write the queue to disk
+    export CLAUDE_QUEUE_ADOPT=on         let a fresh session take the newest
+                                         saved queue in this project
 """,
     edits=[
         Edit(

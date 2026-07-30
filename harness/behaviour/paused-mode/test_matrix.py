@@ -180,7 +180,10 @@ finally:
     lab.stop()
 
 time.sleep(2)
+# The same session resumed by id. A brand new session must NOT see this queue,
+# which is what test_isolation.py pins.
 lab2 = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab2.session_id = lab.session_id
 lab2.start()
 try:
     lab2._pump(8)
@@ -291,6 +294,7 @@ clear_saved_queue()
 print("\n=== F: a RESTORED message, cycled, then released ===")
 CTRL_ENTER = b"\x1b[13;5u"
 lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+_sid = lab.session_id
 lab.start()
 try:
     lab.send("p say OMEGA and nothing else", label="park")
@@ -300,6 +304,7 @@ finally:
 
 time.sleep(2)
 lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab.session_id = _sid          # resumed by id, not a new session
 lab.start()
 try:
     lab._pump(8)

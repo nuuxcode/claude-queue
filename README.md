@@ -189,6 +189,12 @@ Saved queues are your own prompt text in a file inside your project. Add
 `.claude/queue-*.json` to your `.gitignore`, or set
 `CLAUDE_QUEUE_PERSIST=off`.
 
+A queue belongs to one session. Resume that session, with `--continue` or
+`--resume <id>`, and it comes back. **A different session never sees it**, so
+nothing you queued in one terminal can turn up in another. Picking a session
+from the `/resume` menu forks it into a new session, so that path does not
+bring the queue back; the file is left on disk untouched rather than deleted.
+
 ## Why believe any of this
 
 - Before touching anything I recorded unpatched Claude Code running one long
