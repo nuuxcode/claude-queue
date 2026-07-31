@@ -118,7 +118,7 @@ def fold(text, *, highlighted=False, columns=96, collapse=None):
     return json.loads(result.stdout)
 
 
-def persist_scope(*, session="S1", queue=(), persist=None):
+def persist_scope(*, session="S1", queue=(), persist=None, adopt=None):
     """The saving code with just enough of the queue module around it.
 
     The real scope is a closure holding the array, the frozen snapshot and the
@@ -135,6 +135,8 @@ def persist_scope(*, session="S1", queue=(), persist=None):
     return "\n".join([
         "" if persist is None
         else f"process.env.CLAUDE_QUEUE_PERSIST={json.dumps(persist)};",
+        "" if adopt is None
+        else f"process.env.CLAUDE_QUEUE_ADOPT={json.dumps(adopt)};",
         f"let arr={json.dumps(list(queue))};",
         "let snapshot=Object.freeze([]);",
         "let events={emit(){}};",
@@ -187,14 +189,14 @@ class PersistenceTests(unittest.TestCase):
         return run_persist(body, workdir=self.work, session=session,
                            persist=persist)
 
-    def restore(self, *, session="S1", persist=None, workdir=None):
+    def restore(self, *, session="S1", persist=None, workdir=None, adopt=None):
         body = "\n".join([
             "let ok=globalThis.__qsRestore();",
             "console.log(JSON.stringify({ok:ok,"
             "hold:globalThis.__qsHold===true,rows:arr,dir:dir()}));",
         ])
         return run_persist(body, workdir=workdir or self.work, session=session,
-                           persist=persist)
+                           persist=persist, adopt=adopt)
 
     def plant(self, name, values, *, age=0):
         """A queue file this session did not write, optionally an older one.
@@ -248,16 +250,31 @@ class PersistenceTests(unittest.TestCase):
         self.assertIn("claude-queue", body["file"])
         self.assertEqual(body["session"], "S1")
 
-    def test_a_forked_session_in_the_same_project_adopts_what_it_finds(self):
-        """The bug this replaced a test for.
+    def test_another_session_in_the_same_project_sees_nothing(self):
+        """A queue belongs to one session, and this is the whole of it.
 
-        Resuming from the picker forks a new session id, so the id lookup can
-        never match and the messages were saved and then never offered back.
-        The old test here asserted the opposite, that another id sees nothing,
-        which is exactly the behaviour that shipped as the bug.
+        2.1.0 adopted the newest file in the project when the id did not
+        match, which was meant for the /resume fork. Every brand new session
+        also fails to match, so every new terminal adopted the previous one's
+        queue and then saved it forward under its own id. Three terminals in,
+        one file held everything ever parked in the project.
+
+        The reported symptom was a message parked in one window turning up in
+        another, which reads as the queue being global. It is the same bug.
         """
         self.save()
-        got = self.restore(session="FORK")
+        got = self.restore(session="OTHER")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["rows"], [])
+        self.assertTrue(self.file_for("S1").exists(),
+                        "the other session must not take the file either")
+
+    def test_adopting_is_available_on_request_and_still_takes_the_file_over(
+            self):
+        """CLAUDE_QUEUE_ADOPT=on brings 2.1.0 back for anyone who wanted it,
+        leak and all, so the fix removes a default rather than a capability."""
+        self.save()
+        got = self.restore(session="FORK", adopt="on")
         self.assertTrue(got["ok"])
         self.assertTrue(got["hold"])
         self.assertEqual([r["value"] for r in got["rows"]],
@@ -265,19 +282,8 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual([r["priority"] for r in got["rows"]],
                          ["later", "next", "later"])
         self.assertTrue(all(r["restored"] is True for r in got["rows"]))
-
-    def test_adopting_takes_the_file_over_rather_than_copying_it(self):
-        """Rewritten under the session that took them, and the file it took
-        them from is gone, so the next session here is not offered them
-        again."""
-        self.save()
-        got = self.restore(session="FORK")
         self.assertEqual(got["dir"], ["queue-FORK.json"])
         self.assertFalse(self.file_for("S1").exists())
-        self.assertEqual(
-            [m["value"] for m in json.loads(self.file_for("FORK").read_text())
-             ["messages"]],
-            ["alpha", "bravo", "charlie"])
 
     def test_its_own_file_wins_over_a_newer_one_beside_it(self):
         """Exact match stays the primary rule: it is the precise answer for
@@ -289,14 +295,26 @@ class PersistenceTests(unittest.TestCase):
                          ["alpha", "bravo", "charlie"])
         self.assertTrue(self.file_for("SOMEONE-ELSE").exists())
 
-    def test_the_newest_file_is_the_one_adopted(self):
+    def test_the_newest_file_is_the_one_adopted_when_adopting_is_asked_for(
+            self):
         self.plant("OLDER", ["from last week"], age=7 * 24 * 3600)
         self.plant("NEWER", ["from ten minutes ago"], age=600)
-        got = self.restore(session="FORK")
+        got = self.restore(session="FORK", adopt="on")
         self.assertEqual([r["value"] for r in got["rows"]],
                          ["from ten minutes ago"])
         self.assertTrue(self.file_for("OLDER").exists())
         self.assertFalse(self.file_for("NEWER").exists())
+
+    def test_neither_neighbour_is_touched_when_adopting_is_off(self):
+        """The default leaves both files exactly where they are, so opening a
+        second terminal costs the first one nothing."""
+        self.plant("OLDER", ["from last week"], age=7 * 24 * 3600)
+        self.plant("NEWER", ["from ten minutes ago"], age=600)
+        got = self.restore(session="FORK")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["rows"], [])
+        self.assertTrue(self.file_for("OLDER").exists())
+        self.assertTrue(self.file_for("NEWER").exists())
 
     def test_a_fork_in_another_project_still_adopts_nothing(self):
         """The scan cannot leave this project's .claude directory, so the

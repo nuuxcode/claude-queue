@@ -67,6 +67,8 @@ IDLE
 RUNNING
   no marker, or "q ..."   -> stored as a waiting message
   "s ..."                 -> stored as an interrupting message
+  "p ..."                 -> stored as a parked message, which no selector
+                             will ever pick
   tab instead of enter    -> stored with the opposite timing to your
                              default; a marker still wins
   Escape, editor empty    -> stops the turn; waiting messages are kept and
@@ -82,11 +84,17 @@ WHILE MESSAGES WAIT
   up / down               -> move the highlight
   enter                   -> pull the highlighted one back to edit, alone
   shift+up / shift+down   -> move it earlier or later among its own kind
+  left / right            -> cycle its mode: waits, jumps in, paused
+  ctrl+enter              -> let go and run what is runnable, now
   delete / backspace      -> remove it, only when the editor is empty
+
+  reading the queue leaves it free to drain; changing a mode freezes it
+  until ctrl+enter, stepping off the list, or typing anything
 
 TURN FINISHED
   the oldest waiting message starts, as its own turn
   one at a time, in the order shown on screen
+  parked messages are skipped, and stay
 ```
 
 ---
@@ -112,6 +120,13 @@ TURN FINISHED
 | 15 | **Splitting works whether Claude is busy or idle** | kept, and it was broken until it was reported | Busy with an empty queue, busy with a full one, and idle. Idle used to arrive as a single message; the first job now becomes the turn and the rest queue behind it |
 | 16 | **Tab is enter with the opposite timing, and a marker still wins** | kept | Driven against both defaults. Unset: enter waits, tab jumps in. With `CLAUDE_QUEUE_DEFAULT=steer`: enter jumps in, tab waits. An explicit marker still wins. Tab on slash and shell input was also driven, and the inversion did not leak onto the next prompt |
 | 17 | **A non-editable queue item cannot shift where an edited message returns** | fixed in 2.0.1; deterministic regression green, live notification path not driven | The generated JavaScript was run with a shell command, task notification, metadata, and non-human entry around `[alpha, bravo]`. The 2.0.0 code returned edited `bravo` ahead of `alpha`; 2.0.1 translates the editable index to the raw queue index and preserves the raw order. The ordinary all-editable case also passes |
+| 18 | **A parked message never runs until you change it** | kept | Parked while idle and while busy, then left alone through the end of a turn, through the queue draining, and through a restart. It is still parked. The mechanism is that `paused` is absent from the priority table every selector compares against, so all three walk past it with no new condition |
+| 19 | **Parking does not start a turn** | kept, and it was broken until it was reported | A submission that is entirely parked leaves the session idle. Before the fix it started the visible part of a turn that nothing would ever end, and the spinner counted for minutes while the message correctly never ran |
+| 20 | **Cycling a mode cannot fire the message on the way past** | kept | Changing a mode freezes the queue, so cycling from paused through waits to jumps in does not run it at waits. Released by ctrl+enter, by stepping off the list, or by typing. Reading the queue does not freeze it, and a frozen queue does not claim to be working |
+| 21 | **A restored message will not run just because you opened a terminal** | kept | Rows return marked `restored` and are held until you send something or press ctrl+enter while pointing at one. Stepping off the list does not release them, because that can be the tail end of browsing |
+| 22 | **A queue is only ever restored into the session that saved it** | fixed in 2.2.0; deterministic regression green, and driven across six live sessions | 2.1.0 fell back to the newest file in the project when the id did not match, which every brand new session also does, so queues leaked between terminals. The unit tests that asserted the old behaviour were rewritten; `CLAUDE_QUEUE_ADOPT=on` keeps it available |
+| 23 | **A long pasted marker is honoured** | fixed in 2.2.0 | Pasted text accepted only the colon form, so a dictated paragraph starting `p ` ran instead of parking. It now asks whether the message STARTS with something pasted, and a pasted space-marker counts when a letter or digit follows, which keeps `q = deque()` one intact message. Affected `q` and `s` equally in 2.1.0 |
+| 24 | **Waiting for background work does not hold the queue** | not a promise this patch makes, measured so it is not mistaken for one | Both background states were driven against an unpatched control: a background agent alive for 108 seconds, and bash pushed back with ctrl+B. Queued messages drained while both were still running, identically on stock. The screen saying "Waiting for 1 background agent to finish" is not a stopped queue |
 
 The stock-behavior comparisons run against an **unpatched control binary**.
 Those are gaps G2 and G6, reorder R5, and manage D6. Other checks exercise only
@@ -151,20 +166,26 @@ Waiting messages survive. Every change to the queue is written to
 next session you start in that project brings them back as rows reading
 `[waits, restored]`. Nothing runs until you send something yourself.
 
-Two ways back, because there are two. `--continue` and `--resume <id>` keep
-the session id, so the session finds its own file by name. The `/resume` menu,
-which is also what picking a session out of a bare `claude` opens, does NOT
-keep the id: it forks a new session, and the fork's id appears nowhere in the
-saved file. So a session that finds no file of its own takes over the newest
-one in this project instead: it rewrites the messages under its own id and
-deletes the file it took them from, which is what stops the same messages
-being offered again to every session that starts here afterwards.
+**A queue belongs to one session, and only that session.** `--continue` and
+`--resume <id>` keep the session id, so the session finds its own file by name
+and gets its messages back. Any other session finds nothing, structurally, and
+leaves the file alone.
 
-The trade that comes with it, stated rather than hidden: two sessions live in
-the same project, and the second one can take over the first one's file. It
-cannot run any of them, the rows arrive marked `restored`, deleting them is
-one key each, and the first session writes its file again on its next queue
-change.
+The `/resume` menu, which is also what picking a session out of a bare `claude`
+opens, does NOT keep the id: it forks a new session, and the fork's id appears
+nowhere in the saved file. So that path does not bring the queue back. The file
+stays on disk untouched, waiting for a resume that keeps the id.
+
+2.1.0 tried to serve that fork case by taking over the newest file in the
+project whenever the id did not match. That was a mistake, and the reason is
+one line: a brand new session also fails to match. So every new terminal
+adopted the previous one's queue and then saved it forward under its own id,
+and after three terminals one file held everything ever parked in the project.
+It looked like the queue was global.
+
+`CLAUDE_QUEUE_ADOPT=on` restores that behaviour for anyone who preferred it,
+leak and all. It is off by default because a queue turning up in a window you
+did not queue it in is worse than a fork starting empty.
 
 What does NOT survive, stated plainly, because half of persistence is knowing
 where it stops:
@@ -202,13 +223,16 @@ then delete what is waiting.
 The patch changes the Claude Code executable on your machine. Desktop, the VS
 Code extension, Remote Control and the SDK are untouched and keep their own
 behaviour. 
-### There is no pause
+### Parking a message is not pausing a run
 
 The community's full wish list is four operations: steer, queue, interrupt,
-and pause, where pause means freezing the run with its state intact and
-resuming later. This patch provides the first two and leaves interrupt as it
-was. Pause does not exist here, and `Ctrl+Z` at the shell level is a process
-suspension, not an agent-aware pause.
+and pause, where pause means freezing a RUN with its state intact and resuming
+it later. This patch provides steer and queue, leaves interrupt as it was, and
+adds parking, which is a different thing wearing a similar word.
+
+`p` parks a MESSAGE that has not started. It cannot suspend a turn that is
+already running, and `Ctrl+Z` at the shell level is a process suspension, not
+an agent-aware pause. Pausing a run still does not exist here.
 
 ### It does not make Claude write better code
 
@@ -260,6 +284,19 @@ is not easy to hit, not proof that it cannot happen. A deterministic test would
 need a hook inside the submit path, which would be testing the harness rather
 than the build.
 
+Parked messages added six more suites, driven the same way, across live
+sessions rather than reasoned about: the edge-case matrix (29 checks over idle,
+busy, the keys, restart and both holds), a regression pass proving `q` and `s`
+are unchanged by any of it, session isolation, the long-paste case, and both
+background states against a stock control.
+
+Two of those suites started life encoding the very bug they were meant to
+catch. They restarted by creating a NEW session and expected the queue to come
+back, which is the leak, so they passed while it was present and would have
+failed once it was fixed. The unit tests had the same shape and had to be
+rewritten alongside the fix. When a test asserts the bug, fixing the bug turns
+the suite red, and the suite is what tells you which one to believe.
+
 Writing the list first is what found the worst bugs in this patch, all of them
 before anyone reported them:
 
@@ -273,6 +310,11 @@ before anyone reported them:
 
 All three are fixed, and each fix was confirmed by running the same test against
 the previous build and watching it fail there.
+
+Two more were found by using the thing, not by testing it, and they are the two
+carried into 2.2.0 as fixes to 2.1.0: queues leaking between sessions, and a
+long pasted marker being ignored. Both were reported from a real desk after the
+suites were green. A written scenario list finds what you thought of.
 
 The third one is also a lesson about method. Its test had been passing, for the wrong
 reason: it abandoned the edit by pressing Escape, and Escape stops the turn,

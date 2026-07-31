@@ -1249,7 +1249,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.2.0-dev",
+    version="2.2.0",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -1259,9 +1259,14 @@ While Claude is working:
     q write the migration notes    waits, said explicitly
     p rewrite the changelog        parked, never runs until you change it
 
-Also accepted: "q: ..." and "s: ...". The marker is always removed before the
-text reaches Claude. Pasted text is literal unless its first nonblank line uses
-the explicit colon form, which starts a multi-job batch.
+Also accepted: "q: ...", "s: ..." and "p: ...". The marker is always removed
+before the text reaches Claude.
+
+Pasted text is held to a higher bar, because code is full of single letters
+followed by a space. The colon form always counts. The space form counts only
+when a letter or digit follows it, which is what separates a sentence from an
+assignment: "p Okay, so we did pass one" parks, "q = deque()" stays one intact
+message.
 
 With messages waiting:
 
@@ -1269,15 +1274,26 @@ With messages waiting:
     enter                          pull the highlighted one back to edit
     shift+up / shift+down          move it earlier or later in the queue
     left / right                   change its mode: waits, jumps in, paused
+    ctrl+enter                     let go of the queue and run it now
+
+Reading the queue never stops it draining. Changing a mode does, until you let
+go with ctrl+enter, by stepping off the list, or by typing anything. That is
+what lets you cycle past "waits" to reach "jumps in" without it firing on the
+way.
 
 A message taller than one line is drawn as its first line plus a count of the
 lines it is holding back. The highlighted one is always drawn in full.
 
 Waiting messages survive a restart. They are saved in this project's .claude
-directory, and the next session you start here brings them back reading
-[waits, restored], whether you resume that session or pick it from the menu.
-Nothing runs until you send something: your message goes first, then they drain
-after it in their saved order.
+directory under the session they belong to, and resuming that session with
+--continue or --resume <id> brings them back reading [waits, restored]. A
+different session never sees them. Picking a session from the menu forks it
+into a new one, so that path does not bring the queue back and leaves the file
+alone.
+
+A restored message will not run just because you opened a terminal. Send
+something and it goes first, then they drain after it in their saved order, or
+press ctrl+enter while pointing at one to run it now.
 
     export CLAUDE_QUEUE_DEFAULT=steer    restores stock behaviour as default
     export CLAUDE_QUEUE_DRAIN=all        waiting messages all run in one turn

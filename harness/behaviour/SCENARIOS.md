@@ -7,14 +7,20 @@ discovered.
 
 Legend: **T** tested and passing · **G** gap, not tested · **R** risky, reason given
 
-**121 scenarios, 112 tested.** One of them, B7, is a statistical result rather
-than a deterministic one; the reason is below. The nine that are not driven are
-all in sections I and J: three are reasoned from the code and say so in place,
-six are gaps with the reason next to them, and two of those gaps are choices
-rather than omissions, because a shell command and a pasted image are things
-this deliberately does not bring back. Every row marked T names the file that
-tests it. The stock-behavior comparisons use an unpatched control; the
-remaining rows exercise the patched behavior they claim.
+**144 scenarios, 134 tested.** One of them, B7, is a statistical result rather
+than a deterministic one; the reason is below. Of the ten not driven, three are
+reasoned from the code and say so in place, and the rest are gaps with the
+reason next to them; three of those are choices rather than omissions, because
+a shell command, a pasted image and a near-full-context compaction are things
+this deliberately does not do or cannot afford. Every row marked T names the
+file that tests it. The stock-behavior comparisons use an unpatched control;
+the remaining rows exercise the patched behavior they claim.
+
+Sections L and M arrived in 2.2.0, with parking, and with two bugs that were
+in the released 2.1.0 and hit `q` and `s` as hard as `p`: queues leaking
+between sessions, and a long pasted marker being ignored. Both were found by
+using it. Neither was found by this list, which is the honest verdict on what
+a written scenario ledger is for: it finds what you thought of.
 
 ---
 
@@ -160,11 +166,17 @@ of the lines it is holding back. The highlighted one is always drawn whole.
 ## J. Waiting messages surviving a restart
 
 Every change to the queue is written to this project's `.claude` directory, in a
-file named for the session. The next session started in that project brings the
-messages back as rows marked restored, and nothing runs until you send
-something yourself. `--continue` and `--resume <id>` keep the session id and
-find their own file; the `/resume` menu forks a new id, so a session that finds
-no file of its own adopts the newest one this project has waiting.
+file named for the session. Resuming THAT session brings the messages back as
+rows marked restored, and nothing runs until you send something yourself.
+`--continue` and `--resume <id>` keep the session id and find their own file.
+
+**Changed in 2.2.0.** Up to 2.1.0 a session that found no file of its own
+adopted the newest one in the project. That was meant to serve the `/resume`
+menu, which forks a new id, but a brand new session is indistinguishable from a
+fork, so every new terminal adopted the previous one's queue and saved it
+forward under its own id. Restoring is now by session id only, and
+`CLAUDE_QUEUE_ADOPT=on` brings the old behaviour back for anyone who wants it.
+The rows below are marked with which era they describe.
 
 | # | Case | State | Where |
 |---|---|---|---|
@@ -174,11 +186,11 @@ no file of its own adopts the newest one this project has waiting.
 | J4 | crash after the first of three ran: only two come back | T | test_persist N3 |
 | J5 | a message that ran is removed from the file at the moment it is dequeued | T | test_persist N3, which reads the file after the crash |
 | J6 | a session in a DIFFERENT directory sees nothing, even with the same session id | T | test_persist N4 |
-| J7 | resuming from the `/resume` menu, which forks a NEW session id | T | test_persist N9. This shipped broken: the id lookup could never match a forked id, so the messages were saved and never offered back. N1 to N6 all drove `--resume <id>`, which keeps the id, which is why they passed |
-| J7b | a plain new session in the same project adopts what is waiting there | T | test_persist N9 drives exactly that, because a fresh id in the same directory IS the fork. Deliberate: a session cannot tell the two apart |
-| J7c | the adopted file is taken over, not copied: rewritten under the new id, the old one deleted | T | test_persist N9, and tests/test_patch_def PersistenceTests |
+| J7 | resuming from the `/resume` menu, which forks a NEW session id | T, and the answer changed twice. 2.1.0 adopted the newest file so the fork would find something. 2.2.0 does not: the fork starts empty and the file is left on disk for a resume that keeps the id. Serving the fork was what leaked queues between every unrelated terminal, and an empty fork is the cheaper mistake | test_persist N9, and tests/test_patch_def PersistenceTests |
+| J7b | a plain new session in the same project sees NOTHING | T, and this is the whole fix. 2.1.0 adopted, because a fresh id in the same directory is indistinguishable from a fork. That indistinguishability is the bug, not a deliberate trade, and it was reported from a real desk after three terminals accumulated one shared queue | tests/test_patch_def PersistenceTests, and harness/behaviour/paused-mode/test_isolation.py across live sessions |
+| J7c | with `CLAUDE_QUEUE_ADOPT=on`, adopting still takes the file over rather than copying it | T | tests/test_patch_def PersistenceTests |
 | J7d | a session that finds its OWN file ignores a newer one beside it | T | tests/test_patch_def PersistenceTests. Exact match stays the primary rule |
-| J8 | two live sessions in the same project | R, reasoned not driven, and now a stated trade rather than a neutral one: the second session can adopt the first's file. Nothing runs from it, the rows say restored, and the first session rewrites its file on its next queue change. Driving it costs two concurrent paid sessions per assertion |
+| J8 | two live sessions in the same project | T since 2.2.0, and it was driven because it stopped being a reasoned trade and became a bug report. Each session keeps its own file and neither can see or take the other's. test_isolation.py drives it across live sessions rather than reasoning about it |
 | J9 | a file from days ago | T, by construction: nothing expires, and the restored mark is what makes an old message recognisable. The mark is driven by N1 |
 | J10 | the file is corrupt or half written: ignored, and the session still starts | T | test_persist N5 |
 | J11 | restored rows wait, a new message runs first, then they drain in saved order | T | test_persist N6 |
@@ -197,7 +209,56 @@ no file of its own adopts the newest one this project has waiting.
 | J24 | a restored session shows the working spinner while it is idle | T, fixed: a held queue no longer counts as a busy session. Found by probe, and the row stays because the spinner was real and its counter read twenty thousand days |
 | J25 | uninstalling: what is left behind | T, documented: the files are in each project's `.claude`, named `queue-<session>.json`, and the docs say so and say to ignore them |
 | J26 | typing `/resume` itself, while restored rows are being held | T, driven in probe_resume_menu on v23: the picker opens, and the held rows drain, because the hold is released by ANY submission and a slash command is one. Not introduced here, it is the release rule doing what it says, but the fork path is what makes it reachable from a plain `claude`. Left as it is: the person did send something |
-| J27 | a bare `claude` with no `--session-id` at all | T, driven in probe_resume_menu on v23: a file planted by a session that no longer exists came back as two rows marked restored, and was rewritten under the new id. N9 passes an explicit id, so this is the row that proves the app's own id generation is not what the fallback depends on |
+| J27 | a bare `claude` with no `--session-id` at all | T, and the expected result inverted in 2.2.0. On v23 a file planted by a dead session came back and was rewritten under the new id, which proved the fallback did not depend on the app's own id generation. It is now the plainest statement of the leak: a bare `claude` is a new session, and a new session gets nothing |
+
+---
+
+## L. Parking a message, and changing its mode (2.2.0)
+
+`p text` puts a message in the queue that nothing will ever pick. Left and
+right cycle the highlighted message through waits, jumps in and paused;
+ctrl+enter lets go and runs it.
+
+The mechanism is worth stating because it is what makes the rest cheap.
+Claude Code ranks queued work with `{now:0, next:1, later:2}` and three
+separate selectors compare against that table. `paused` is deliberately not a
+key in it, and a missing key loses every comparison, so all three skip a parked
+message without a single new condition on the running path.
+
+| # | Case | State | Where |
+|---|---|---|---|
+| L1 | `p text` while BUSY parks, and the turn ends without running it | T | test_matrix B3 |
+| L2 | `p text` while IDLE parks and does NOT start a turn | T, and it shipped broken in the first build: the prompt box starts the visible part of a turn before anything has decided what the message is, so a parked message started a turn nothing would ever end. The spinner counted for minutes over a queue that was correctly untouched | test_matrix A1, A2, A3 |
+| L3 | skipping only the bookkeeping call is not enough: the display call must be skipped too | T, found by the session clock rendering `20664d 16h 39m`, which is what a start time of zero looks like | test_matrix A2 |
+| L4 | a mixed submission runs its first runnable line and parks the rest | T | test_matrix A6, A7 |
+| L5 | `print the report` and `paused for a moment` are ordinary messages | T | test_matrix A4 |
+| L6 | a bare `p` stays a literal message | T | test_matrix A5 |
+| L7 | left and right cycle the mode in both directions, while busy | T | test_matrix B4, B5 |
+| L8 | delete removes a parked row like any other | T | test_matrix B6 |
+| L9 | a parked message survives a restart and comes back parked | T | test_matrix C1, C2, C3 |
+| L10 | reading the queue does NOT stop it draining | T, and an early build froze on any browsing, which made the queue feel stuck for looking at it | test_matrix E1 |
+| L11 | changing a mode freezes the queue until you let go | T. Without it, cycling forward from paused would fire the message as it passed through waits, which is the exact surprise `p` exists to prevent | test_matrix E2, E3 |
+| L12 | ctrl+enter releases and runs | T | test_matrix E4 |
+| L13 | stepping off the list releases a frozen queue | T | test_matrix D4 |
+| L14 | a frozen queue does not claim to be working | T, fixed: an earlier build spun a working indicator for as long as you held the queue, because a message about to run counted as work in flight even though nothing could drain | test_matrix D2, D3 |
+| L15 | a RESTORED message can be cycled and then released with ctrl+enter | T, and this was reported broken: sending a message lifted the restore hold but the run gesture only cleared the highlight, so the one key meaning "go" was the one key that did nothing | test_matrix F1 to F4 |
+| L16 | stepping off the list does NOT release a restored message | T, deliberate: that can be the tail end of browsing, while a keypress aimed at one message is an intention | test_matrix F3 |
+| L17 | `q` and `s` are unchanged by all of the above | T | test_regress, 8 checks |
+| L18 | a long dictated paste starting `p ` parks instead of running | T, and this is a fix to 2.1.0 that affected `q` and `s` equally: pasted text accepted only the colon form | test_longpaste, 5 checks |
+| L19 | pasted code containing `q = deque()` stays one intact message | T. The paste rule accepts a space marker only when a letter or digit follows it, which is what separates a sentence from an assignment | test_longpaste |
+
+## M. Background work, which looks like it should hold the queue
+
+Neither of these is a promise this patch makes. They are measured so the
+screen is not mistaken for a stopped queue, and both were driven against an
+unpatched control.
+
+| # | Case | State | Where |
+|---|---|---|---|
+| M1 | a message TYPED while "Waiting for N background agents to finish" | T, runs in about 2 seconds, identically on stock | test_bgagent2 T1 |
+| M2 | a message already QUEUED when the turn ends, with an agent still alive | T, drains at the end of the turn, 64 seconds before the agent finished, identically on stock. Claude Code has a run phase named `waiting_for_agents` and does not count it as busy | test_bgagent2 T2 |
+| M3 | a queued message with bash pushed back by ctrl+B | T, drained at 39.6s with the shell still alive and about 45 seconds left to run | test_bgbash |
+| M4 | the harness reaching M3 at all | R, and it printed a confident wrong answer twice before it did. ctrl+b only fires inside the Task key context, so pressing it when the turn starts is swallowed and the command runs in the foreground; and the footer grows from "1 shell" to "1 shell, 1 monitor", so an exact-string liveness check read a live shell as finished. Neither failed loudly |
 
 ---
 

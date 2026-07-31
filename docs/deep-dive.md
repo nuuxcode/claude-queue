@@ -542,6 +542,16 @@ Updates replace the binary, which removes the patch. The launcher re-applies
 the same approved code on the next start. If the new release moved the code
 this patches, it refuses cleanly and you run stock until the patterns catch up.
 
+**My queue looks stuck while it says "Waiting for 1 background agent to
+finish". Is it?**
+No. That state does not hold the queue, and neither does bash work pushed to
+the background with ctrl+B. Both were driven with a stopwatch against an
+unpatched Claude Code: a message queued at 17.9 seconds ran when the turn ended
+at 44.3, while the agent kept going until 108. Stock behaves identically, so
+this is not something the patch introduced or could change. Claude Code has a
+run phase named `waiting_for_agents` and deliberately does not count it as
+busy.
+
 **Why patch the binary instead of an extension or MCP server?**
 The behaviour being fixed lives in the input path of the terminal app itself;
 no plugin surface reaches it. The patch is small, refuses on mismatch, and is

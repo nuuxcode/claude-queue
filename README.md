@@ -113,7 +113,7 @@ arrangement: enter jumps in, tab queues.
 
 Works on the npm install of Claude Code on macOS and Linux. Needs Python 3.9+
 and Node.js. WSL2 is not yet verified. Verified on Claude Code 2.1.220, the
-current npm release, last checked 2026-07-29.
+current npm release, last checked 2026-07-31.
 
 The recommended first step is to clone the repository and run the no-change
 check:
@@ -205,7 +205,11 @@ bring the queue back; the file is left on disk untouched rather than deleted.
   word. The [recording harness](harness/) ships here, point it at your own
   machine.
 - 121 behaviour scenarios in the ledger, 112 driven, every remaining gap
-  named in place. [The suites ship too](harness/behaviour/).
+  named in place, plus six more suites for parking and the two bugs this
+  release fixes. [The suites ship too](harness/behaviour/).
+- Both bugs fixed here were found by using it, not by testing it, and both are
+  written up with the mistake that hid them. Two test suites had encoded one of
+  them so thoroughly that fixing it turned them red.
 - The research measures both dangers. A model interrupted mid-thought lost
   [up to 60% accuracy](https://arxiv.org/abs/2510.11713) in one study. A
   model fed its task in scattered pieces did
