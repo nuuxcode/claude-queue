@@ -260,6 +260,8 @@ Every queued message is labelled with what it will do:
 ❯ [waits] write the migration notes
 ❯ [waits] then run the test suite
 ❯ [jumps in] wrong file, stop
+❯ [paused] rewrite the docs
+❯ [waits, restored] from the session you closed yesterday
 ```
 
 The labels are drawn on your screen and are never part of what Claude receives.
@@ -279,15 +281,218 @@ must NOT be treated as markers:
 ```
 q ...   q: ...                      wait          Q ... too
 s ...   s: ...                      jump in       S ... too
+p ...   p: ...                      park          P ... too
 start the server    stop the build     Queue depth     Steer clear
+paused for a moment    print the report
                                        all untouched, all just messages
 " q fix the tests"  leading space escapes it, arrives as "q fix the tests"
 "q" alone           stays a literal message, never an empty send
+"p" alone           same
 ```
 
-Pasted text is literal unless its first nonblank line uses `q:` or `s:`. That
-explicit colon form starts a multi-job batch. Ordinary code containing
-`q = deque()` or `s = socket()` stays one intact message.
+### What counts when the text was pasted
+
+Typed text and pasted text are held to different standards, because a paste is
+usually code and code is full of single letters followed by a space.
+
+A pasted message keeps the colon form always. It keeps the space form only when
+a letter or digit comes next, which is the line that separates a sentence from
+an assignment:
+
+```
+p: rewrite the docs                    parks
+p Okay, so we did pass one for...      parks, a real sentence
+q = deque()                            one intact message, as always
+s = socket()                           one intact message
+```
+
+The rule used to ask whether the pasted text appeared anywhere in the message,
+and only accepted the colon form. A long dictated paragraph starting with `p `
+therefore ran instead of parking. That bug is in the released 2.1.0 and it hits
+`q` and `s` exactly as hard, since all three share this path. The test is now
+whether the message STARTS with something pasted.
+
+## Parking a message with `p`
+
+A parked message sits in the queue and never runs. Not at the end of the
+current turn, not when the queue drains, not when you restart tomorrow. It
+waits for you to say it means something.
+
+```
+❯ p rewrite the docs before the release
+  [paused] rewrite the docs before the release      still there, an hour later
+```
+
+It is the only mode that cannot surprise you. `q` will run the moment the
+current turn ends, which is sometimes sooner than you thought. `p` will not.
+
+### How it refuses to run
+
+Claude Code ranks queued work with a small table:
+
+```
+now: 0     next: 1     later: 2
+```
+
+Three separate places pick work out of the queue, and all three compare against
+that table. The mid-turn fold asks whether the message ranks at or above
+`next`. Peek and dequeue both scan for anything ranking below infinity.
+
+`paused` is deliberately **not a key in that table**. A missing key loses every
+one of those comparisons, so all three selectors walk past it without a single
+new condition being added to the running path. Nothing was gated, nothing was
+wrapped in an `if`. The message is simply never chosen.
+
+That is why parking cannot slow down or destabilise the normal queue: there is
+no new check to get wrong.
+
+### The turn that started for a message that never ran
+
+The first version broke on an idle session, and the shape of the bug is worth
+keeping.
+
+Submitting a message starts the visible part of a turn before anything has
+decided what the message is. On a busy session that is invisible, because a
+turn is already running. On an idle session, a parked message started a turn
+that nothing would ever end:
+
+```
+❯ p alo
+  [paused] alo
+✻ Simmering… (4m 12s)          nothing running, nothing ever finishing
+```
+
+The clock ran for minutes. The message really was parked and really never ran,
+so the queue was correct and only the screen was lying, which is the kind of
+bug that is easy to argue away and impossible to unsee.
+
+The fix is that a submission which is entirely paused does not start a turn at
+all. A mixed submission still does, and runs its first runnable line:
+
+```
+❯ q: say KIWI
+  p: say LATER
+⏺ KIWI                          ran
+  [paused] say LATER            did not
+```
+
+Skipping only the bookkeeping call was not enough. The display call had to be
+skipped too, and while it was not, the session clock rendered `20664d 16h 39m`,
+which is what a start time of zero looks like.
+
+## Changing what a queued message will do
+
+Point at a message with up and down, then press left or right. The mode cycles:
+
+```
+[waits]  ->  [jumps in]  ->  [paused]  ->  [waits]  ...
+```
+
+Both arrows walk the same loop in opposite directions. It works while Claude is
+busy and while it is idle.
+
+### Why changing a mode freezes the queue
+
+Cycling forward from `paused` passes through `waits` on the way to `jumps in`.
+If the queue were free to drain at that instant, the message would fire while
+you were still deciding, which is exactly the surprise `p` exists to prevent.
+
+So **changing a mode freezes the queue**, and only changing it. Reading the
+queue does not:
+
+```
+up, up, down              the queue keeps draining behind you
+left or right             frozen from that moment
+```
+
+An early version froze on any browsing. It was wrong, because looking at
+something is not a claim on it, and it made the queue feel like it was stuck.
+
+### Letting go
+
+The freeze lifts three ways:
+
+```
+ctrl + enter    run what is runnable, now
+down off the end of the list    stepping away
+typing anything                 you have moved on
+```
+
+Ctrl and enter is the deliberate one. It says you are pointing at this message
+and you mean it.
+
+While frozen, the session does not claim to be working. An earlier build left a
+working indicator spinning for as long as you held the queue, because a message
+about to run counted as work in flight even though nothing could drain. A held
+queue now reports itself honestly as idle.
+
+### Messages brought back from a previous session
+
+A restored message is held harder than a frozen one:
+
+```
+  [waits, restored] finish the migration notes
+```
+
+Opening a terminal is not a decision, so a restored message will not run just
+because Claude Code started. It is released by sending something, or by ctrl
+and enter while pointing at it. Stepping off the list does **not** release it,
+because that can be the tail end of browsing rather than an intention.
+
+Ctrl and enter releasing a restored message had to be added separately. Sending
+a message lifted the restore hold, but the run gesture only cleared the
+highlight, so the one key that means "go" was the one key that did nothing.
+
+## A queue belongs to one session
+
+Resume a session with `--continue` or `--resume <id>` and its queue comes back.
+Open a different terminal and you see nothing:
+
+```
+session A   p draft the release notes      parked here
+session B   (a new terminal)               empty, and stays empty
+```
+
+The released 2.1.0 does not do this. When no saved file matched the current
+session id it fell back to the newest file in the project, which also matched
+every brand new session. So each new terminal adopted the previous one's queue
+and then saved it forward under its own id. Three terminals in, one file held
+everything ever parked in that project.
+
+Restoring now happens by session id only. `CLAUDE_QUEUE_ADOPT=on` brings the
+old behaviour back, along with its leak, for anyone who was relying on it.
+
+Choosing a session from the `/resume` menu forks it into a new session, so that
+path does not bring the queue back. The file is left alone on disk rather than
+deleted.
+
+## Waiting for background work does not hold the queue
+
+Claude Code shows two states that look like they should stop everything:
+
+```
+✻ Waiting for 1 background agent to finish
+✻ Cogitated for 23s · 1 shell still running
+```
+
+Neither one holds the queue. Both were driven with a real background agent that
+lived 108 seconds, and with a bash command pushed to the background with
+ctrl+B:
+
+```
+queued at 17.9s     [waits] say KIWI
+turn ends  44.3s    KIWI answered here
+agent ends 108.2s   64 seconds later
+```
+
+Unpatched Claude Code behaves identically, so this is not something the patch
+introduced or could fix. It also matches the code: there is a run phase named
+`waiting_for_agents`, and the check for whether the session is busy explicitly
+excludes it.
+
+This is written down because it looks like a bug and is not one, and because a
+marker meaning "run even while background work is pending" would have nothing
+to do.
 
 ## Editing something you already queued
 
@@ -499,6 +704,27 @@ generated-JavaScript regression now covers those shapes. It failed on 2.0.0
 and passes on 2.0.1. The patch also applied to a real 2.1.220 stock executable
 and the rebuilt copy started. A live background task notification landing
 mid-queue has not been driven.
+
+Parked messages were driven the same way, in six real sessions:
+
+```
+test_matrix.py      29 checks   idle, busy, the keys, restart, the holds
+test_regress.py      8 checks   q and s unchanged by any of it
+test_isolation.py    6 checks   one session's queue never reaches another
+test_longpaste.py    5 checks   a long dictated paste parks instead of running
+test_bgagent2.py     4 states   background agents against a stock control
+test_bgbash.py       1 state    backgrounded bash, same question
+```
+
+Two of those suites started life encoding the leak they were supposed to catch.
+They restarted by creating a **new** session and expected the queue to come
+back, which is the bug, so they passed while the bug was present and would have
+failed once it was fixed. They now resume by session id.
+
+A third produced a false regression for a whole round because a leftover
+`queue-*.json` in the lab workspace restored rows into the next run, so every
+count measured the wrong session. Both suites now wipe that file before they
+start.
 
 The other half of that discipline is distrusting the harness. Twenty-one distinct
 harness faults were found while building and auditing this, and fifteen of them produced a
