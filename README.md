@@ -91,6 +91,7 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | ctrl + enter | let go of the list and run what is runnable, now |
 | `/model`, `/status`, `/usage` | open at once, even mid-turn. They change nothing Claude is doing, so they do not wait |
 | delete | remove it, only while the editor is empty |
+| escape | hands waiting messages back to the editor, the way it always has. Parked ones stay put |
 
 Reading the list never stops it. **Changing a mode does**, until you let go,
 which is what lets you cycle past `waits` to reach `jumps in` without it
@@ -204,7 +205,7 @@ bring the queue back; the file is left on disk untouched rather than deleted.
   message first, merged both into one answer, and the screen never said a
   word. The [recording harness](harness/) ships here, point it at your own
   machine.
-- 121 behaviour scenarios in the ledger, 112 driven, every remaining gap
+- 159 behaviour scenarios in the ledger, 148 driven, every remaining gap
   named in place, plus six more suites for parking and the two bugs this
   release fixes. [The suites ship too](harness/behaviour/).
 - Both bugs fixed here were found by using it, not by testing it, and both are

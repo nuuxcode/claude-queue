@@ -10,20 +10,35 @@ the shipped behaviour rather than the new feature.
 """
 import glob
 import os
+import pathlib
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
+
+WS = WORKSPACE
 from lab import Lab, busy_for  # noqa: E402
 
-LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+LIVE = patched_binary()
+
+# A turn with tool boundaries in the MIDDLE, not only at the end, so a steer
+# has somewhere to land while the turn keeps running.
+THREE_STEP = (
+    "run these three bash commands one after another, in the foreground, "
+    "waiting for each to finish before starting the next. do not change them, "
+    "do not run them in the background, do not combine them into one call:\n"
+    "for i in {1..8}; do echo A$i; sleep 1; done\n"
+    "for i in {1..8}; do echo B$i; sleep 1; done\n"
+    "for i in {1..8}; do echo C$i; sleep 1; done")
 fails = []
 
 
 def clear_saved_queue_at_start():
     """A queue file left by an earlier run restores rows into this one and
     every count in here is then measuring the wrong session."""
-    d = os.path.expanduser("~/Developer/_claude-lab/workspace/.claude")
+    d = os.path.join(WORKSPACE, ".claude")
     for f in glob.glob(os.path.join(d, "queue-*.json")):
         os.remove(f)
 
@@ -42,11 +57,16 @@ def qrows(s):
             if "[waits" in ln or "[jumps in" in ln or "[paused" in ln]
 
 
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     # --- 1. the default is still "waits", and s still jumps in -------------
-    lab.send(busy_for(20), label="busy")
+    # THREE commands, not one. A steer lands at the next tool boundary, and a
+    # single bash call has exactly one, at the very end, so BETA arriving and
+    # the turn ending were the same instant and check 3 came down to which the
+    # poll saw first. It passed on luck twice and failed on the third run.
+    # Three calls put two boundaries in the middle of the turn.
+    lab.send(THREE_STEP, label="busy")
     time.sleep(2)
     lab.send("also say ALPHA", label="no marker")
     lab.send("s also say BETA", label="s marker")
@@ -61,10 +81,12 @@ try:
           any("[jumps in]" in r and "BETA" in r for r in rows))
 
     # BETA should reach the model during the turn, ALPHA should not.
+    # Poll finely. The state under test is an intermediate one, so a coarse
+    # poll can step straight over it and report the end state as a failure.
     got_beta_early = False
-    deadline = time.time() + 60
+    deadline = time.time() + 90
     while time.time() < deadline:
-        lab._pump(2)
+        lab._pump(0.4)
         s = lab.screen()
         if "BETA" in s and not any("BETA" in r for r in qrows(s)):
             got_beta_early = any("ALPHA" in r for r in qrows(s))

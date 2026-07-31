@@ -7,15 +7,18 @@ Three sessions so the states are honest rather than simulated:
   C  a restart, to prove a paused message comes back paused
 """
 import os
+import pathlib
 import re
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
 from lab import Lab, busy_for  # noqa: E402
 
-LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
+LIVE = patched_binary()
+WS = WORKSPACE
 RIGHT, LEFT, BKSP = b"\x1b[C", b"\x1b[D", b"\x7f"
 fails = []
 
@@ -70,7 +73,7 @@ def wait_idle(lab, limit=200):
 # =====================================================================  A
 clear_saved_queue()
 print("\n=== A: idle session ===")
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     lab.send("p alo", label="p idle")
@@ -113,7 +116,7 @@ finally:
 # =====================================================================  B
 clear_saved_queue()
 print("\n=== B: busy session, and the editing keys ===")
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     lab.send(busy_for(30), label="busy")
@@ -169,7 +172,7 @@ finally:
 # =====================================================================  C
 clear_saved_queue()
 print("\n=== C: a paused message survives a restart ===")
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     lab.send("p say DELTA and nothing else", label="p")
@@ -182,7 +185,7 @@ finally:
 time.sleep(2)
 # The same session resumed by id. A brand new session must NOT see this queue,
 # which is what test_isolation.py pins.
-lab2 = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab2 = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab2.session_id = lab.session_id
 lab2.start()
 try:
@@ -210,7 +213,7 @@ def indicator(lab):
     return None
 
 
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     lab.send("p say ZEBRA and nothing else", label="park while idle")
@@ -242,7 +245,7 @@ finally:
 clear_saved_queue()
 print("\n=== E: reading is free, changing holds, ctrl+enter releases ===")
 CTRL_ENTER = b"\x1b[13;5u"
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     # reading the queue must NOT stop it draining
@@ -265,7 +268,7 @@ finally:
     lab.stop()
 
 clear_saved_queue()
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     lab.send("p say ZEBRA and nothing else", label="park")
@@ -293,7 +296,7 @@ finally:
 clear_saved_queue()
 print("\n=== F: a RESTORED message, cycled, then released ===")
 CTRL_ENTER = b"\x1b[13;5u"
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 _sid = lab.session_id
 lab.start()
 try:
@@ -303,7 +306,7 @@ finally:
     lab.stop()
 
 time.sleep(2)
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.session_id = _sid          # resumed by id, not a new session
 lab.start()
 try:

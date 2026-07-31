@@ -35,14 +35,13 @@ import re
 import sys
 import time
 
-sys.path.insert(0, "/private/tmp/claude-501/-Users-hamzadebbarh/"
-                   "01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from freelab import FreeLab  # noqa: E402
+from paths import WORKSPACE, patched_binary, scratch  # noqa: E402
 
-PATCHED = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
-LOG = ("/private/tmp/claude-501/-Users-hamzadebbarh/"
-       "01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad/bgbash-evidence.txt")
+PATCHED = patched_binary()
+WS = WORKSPACE
+LOG = scratch("bgbash-evidence.txt")
 CTRL_B = b"\x02"
 BUSY = ("run this exact bash command in the foreground and wait for it to "
         "finish. do not run it in the background, do not change it: "
@@ -59,7 +58,7 @@ def say(s=""):
 for f in glob.glob(os.path.join(WS, ".claude", "queue-*.json")):
     os.remove(f)
 
-lab = FreeLab(binary=PATCHED, model="haiku", cols=100, rows=44)
+lab = FreeLab(workspace=WS, binary=PATCHED, model="haiku", cols=100, rows=44)
 lab.start()
 try:
     t0 = time.time()

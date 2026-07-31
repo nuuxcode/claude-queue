@@ -2,29 +2,24 @@
 """Does /model open straight away mid-turn, on stock and on the patch?
 
 Claude Code's changelog says 2.1.30 changed /model to execute immediately
-instead of being queued. Mounssif saw it queued as "[waits] /model" on the
+instead of being queued. It was reported queued as "[waits] /model" on the
 patched build, so the question is whether the patch caused that or whether
 stock does the same thing. Both binaries, same script, same timing.
 """
 import glob
 import os
-import shutil
+import pathlib
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary, stock_binary  # noqa: E402
 from lab import Lab, busy_for  # noqa: E402
 
-PATCHED = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-STOCK_SRC = os.path.expanduser(
-    "~/.claude-patch/backups/claude-2.1.220-8addc857f3fe.orig")
-STOCK = "/private/tmp/claude-501/-Users-hamzadebbarh/" \
-        "01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad/stock-claude.exe"
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
-
-if not os.path.exists(STOCK):
-    shutil.copy2(STOCK_SRC, STOCK)
-    os.chmod(STOCK, 0o755)
+PATCHED = patched_binary()
+STOCK = stock_binary()
+WS = WORKSPACE
 
 
 def clean():
@@ -34,7 +29,7 @@ def clean():
 
 def run(binary, label):
     clean()
-    lab = Lab(binary=binary, model="haiku", cols=100, rows=44)
+    lab = Lab(workspace=WS, binary=binary, model="haiku", cols=100, rows=44)
     lab.start()
     out = {}
     try:

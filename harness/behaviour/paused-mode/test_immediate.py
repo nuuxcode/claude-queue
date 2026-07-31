@@ -1,10 +1,12 @@
 """Do /model, /status and /usage open instantly mid-turn, stock vs patched?"""
-import glob, os, shutil, sys, time
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+import glob, os, pathlib, sys, time
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary, stock_binary  # noqa: E402
 from lab import Lab, busy_for
-PATCHED="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-STOCK="/private/tmp/claude-501/-Users-hamzadebbarh/01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad/stock-claude.exe"
-WS=os.path.expanduser("~/Developer/_claude-lab/workspace")
+PATCHED = patched_binary()
+STOCK = stock_binary()
+WS = WORKSPACE
 MARKS={"/model":("Default (recommended)","Haiku","Sonnet"),
        "/status":("Account","Session","Working directory","Model"),
        "/usage":("Usage","limit","resets","Current session")}
@@ -12,7 +14,7 @@ def clean():
     for f in glob.glob(os.path.join(WS,".claude","queue-*.json")): os.remove(f)
 def probe(binary,cmd):
     clean()
-    lab=Lab(binary=binary,model="haiku",cols=100,rows=44); lab.start()
+    lab=Lab(workspace=WS, binary=binary,model="haiku",cols=100,rows=44); lab.start()
     try:
         lab.send(busy_for(35),label="busy"); time.sleep(4)
         running = "esc to interrupt" in lab.screen()

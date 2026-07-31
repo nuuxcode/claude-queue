@@ -6,7 +6,7 @@ Two different things get confused here, so both are driven:
   T1  a message TYPED during "Waiting for N background agents to finish"
   T2  a message already QUEUED when the turn ends, with an agent still alive
 
-T2 is the one Mounssif actually saw. T1 alone cannot answer it, because a
+T2 is the one that was actually reported. T1 alone cannot answer it, because a
 typed message on an idle prompt bypasses the queue entirely.
 
 The background agent is kept alive with the same bash loop the harness uses
@@ -19,22 +19,17 @@ was alive" is a measurement, not an impression.
 """
 import glob
 import os
-import shutil
 import sys
 import time
 
-sys.path.insert(0, "/private/tmp/claude-501/-Users-hamzadebbarh/"
-                   "01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from freelab import FreeLab  # noqa: E402
+from paths import WORKSPACE, patched_binary, scratch, stock_binary  # noqa: E402
 
-PATCHED = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-STOCK_SRC = os.path.expanduser(
-    "~/.claude-patch/backups/claude-2.1.220-8addc857f3fe.orig")
-SCRATCH = ("/private/tmp/claude-501/-Users-hamzadebbarh/"
-           "01760ee6-421a-4114-a9ad-bc3289f8e897/scratchpad")
-STOCK = os.path.join(SCRATCH, "stock-claude.exe")
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
-LOG = os.path.join(SCRATCH, "bgagent2-evidence.txt")
+PATCHED = patched_binary()
+STOCK = stock_binary()
+WS = WORKSPACE
+LOG = scratch("bgagent2-evidence.txt")
 
 LOOP = "for i in {1..100}; do echo $i; sleep 1; done"
 LAUNCH = (
@@ -110,7 +105,7 @@ def wait_until(lab, pred, limit, step=2):
 def t1(binary, label):
     clean()
     say(f"\n---- T1  typed during the wait, {label} ----")
-    lab = FreeLab(binary=binary, model="haiku", cols=100, rows=44)
+    lab = FreeLab(workspace=WS, binary=binary, model="haiku", cols=100, rows=44)
     lab.start()
     r = {}
     try:
@@ -148,7 +143,7 @@ def t1(binary, label):
 def t2(binary, label):
     clean()
     say(f"\n---- T2  QUEUED before the turn ended, {label} ----")
-    lab = FreeLab(binary=binary, model="haiku", cols=100, rows=44)
+    lab = FreeLab(workspace=WS, binary=binary, model="haiku", cols=100, rows=44)
     lab.start()
     r = {}
     try:
@@ -208,9 +203,6 @@ def t2(binary, label):
     return r
 
 
-if not os.path.exists(STOCK):
-    shutil.copy2(STOCK_SRC, STOCK)
-    os.chmod(STOCK, 0o755)
 
 res = {}
 for binary, label in ((PATCHED, "PATCHED"), (STOCK, "STOCK")):

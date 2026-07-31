@@ -39,6 +39,14 @@ your global hooks, instructions, settings, memory, plugins, MCP servers, or
 agents. The driver removes its own UUID-named transcript and new empty history
 directory when the session stops.
 
+The two background-agent suites in `paused-mode/` are the exception, and they
+have to be: `--safe-mode` disables agents, which is the thing they measure.
+They use `paused-mode/freelab.py`, which drops safe-mode and then puts the rest
+back off by hand with `--strict-mcp-config` and `--setting-sources project`, so
+no MCP server loads and none of your own hooks fire inside the test. What comes
+back is agents, plus your CLAUDE.md, which costs tokens and changes nothing
+about queue behaviour.
+
 Any check that needs the session transcript must read it before `lab.stop()`.
 Stopping the session removes that UUID-named transcript. Reading it afterwards
 produces missing evidence and a false failure.
@@ -61,12 +69,33 @@ minutes of model time on whatever `--model` you pass (default `haiku`).
 | `test_hard.py` | The three that needed their own driver: a message queued while a subagent runs, a queued message carrying a pasted image, and a submit fired at eight different offsets around the end of a turn |
 | `test_manage.py` | Removing a message, every case where the delete key must do nothing, explicit colon-marked pasted batches, and Tab on prompts, slash commands, and shell commands |
 
+### `paused-mode/`, added in 2.2.0
+
+These cover parking, the mode arrows, and the three bugs this release fixes:
+two that are in the released 2.1.0 and one in parking itself. They resolve their own binaries and workspace through
+`paused-mode/paths.py`, so they need no arguments; override with
+`CLAUDE_QUEUE_TEST_PATCHED`, `_STOCK`, `_SCRATCH` or `_WORKSPACE`.
+
+Note the name clash: `paused-mode/test_matrix.py` is not the `test_matrix.py`
+above. This one is the parking edge-case matrix.
+
+| suite | what it proves |
+|---|---|
+| `test_matrix.py` | 30 checks over six sessions: parking while idle and while busy, the near-misses that must stay literal, the arrows, delete, a restart, the freeze on changing a mode, and both ways of letting go |
+| `test_regress.py` | `q` and `s` are unchanged by all of the above |
+| `test_isolation.py` | The three-terminal reproduction. One session's queue never reaches another, and each keeps its own file |
+| `test_longpaste.py` | A long dictated paste starting `p ` parks instead of running, while pasted `q = deque()` stays one intact message |
+| `test_bgagent2.py` | Whether a background agent holds the queue, typed and queued, against an unpatched control. It does not |
+| `test_bgbash.py` | The same question for bash pushed back with ctrl+B. Also no |
+| `test_escape.py` | Escape hands waiting messages back and leaves parked ones. Four of its seven checks fail on the build before the fix |
+| `test_slash_model.py`, `test_immediate.py`, `test_model_now.py` | `/model` opening mid-turn, stock versus patched |
+
 One post-audit regression is deliberately outside these real-session suites:
 `tests/test_patch_def.py` executes the generated queue-edit JavaScript with a
 non-editable shell command, task notification, metadata item, or non-human item
 around the selected message. It checks the raw slot translation with and
 without those entries. The live notification path has not been driven, so the
-behavior-suite ledger now holds one hundred twenty-one scenarios, 112 tested.
+behavior-suite ledger now holds one hundred fifty-nine scenarios, 148 tested.
 
 ## The rule these were written under
 

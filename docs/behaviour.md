@@ -426,6 +426,28 @@ working indicator spinning for as long as you held the queue, because a message
 about to run counted as work in flight even though nothing could drain. A held
 queue now reports itself honestly as idle.
 
+### Escape leaves a parked message where it is
+
+Escape hands the queue back to you as editable text. For waiting messages that
+is the right answer, and it is what an unpatched build does too: you stopped
+the turn, so here is everything that was about to run.
+
+Parked messages stay:
+
+```
+  [waits]  run the migration        escape ->  back in the editor
+  [paused] rewrite the docs         escape ->  still queued
+```
+
+Escape is also how you reach the rewind picker, so before this a trip back
+through your own history quietly emptied whatever you had set aside.
+
+Worth knowing, because it decides which Escape does what: an Escape while
+Claude is working only stops the turn and does not touch the queue. The queue
+is emptied by an Escape with nothing running. And since stopping a turn starts
+the first waiting message, a queue with waiting messages in it keeps producing
+new turns for the next Escape to stop.
+
 ### Messages brought back from a previous session
 
 A restored message is held harder than a frozen one:

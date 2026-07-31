@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One session's queue must never appear in another session.
 
-This is Mounssif's three-terminal reproduction: session one parks a message, a
+This is the reported three-terminal reproduction: session one parks a message, a
 brand new session comes up, and it should see nothing at all. Then that new
 session parks its own, a third starts, and it should see nothing either.
 
@@ -10,15 +10,18 @@ must still get its own messages back.
 """
 import glob
 import os
+import pathlib
 import sys
 import time
 import uuid
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
 from lab import Lab  # noqa: E402
 
-LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
+LIVE = patched_binary()
+WS = WORKSPACE
 fails = []
 
 
@@ -39,7 +42,7 @@ def clean():
 
 
 def session(sid):
-    lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+    lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
     lab.session_id = sid
     return lab
 

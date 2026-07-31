@@ -11,13 +11,18 @@ Four claims, each checked on the rendered screen rather than on the stream:
 """
 import glob
 import os
+import pathlib
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
+
+WS = WORKSPACE
 from lab import Lab, busy_for  # noqa: E402
 
-LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+LIVE = patched_binary()
 LEFT, RIGHT = b"\x1b[D", b"\x1b[C"
 
 fails = []
@@ -26,7 +31,7 @@ fails = []
 def clear_saved_queue_at_start():
     """A queue file left by an earlier run restores rows into this one and
     every count in here is then measuring the wrong session."""
-    d = os.path.expanduser("~/Developer/_claude-lab/workspace/.claude")
+    d = os.path.join(WORKSPACE, ".claude")
     for f in glob.glob(os.path.join(d, "queue-*.json")):
         os.remove(f)
 
@@ -49,7 +54,7 @@ def queue_rows(screen):
             or "[jumps in" in r]
 
 
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 print("session up\n")
 

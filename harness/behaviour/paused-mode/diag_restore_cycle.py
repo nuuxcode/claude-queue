@@ -7,15 +7,18 @@ happens.
 """
 import glob
 import os
+import pathlib
 import sys
 import time
 
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
 from lab import Lab  # noqa: E402
 
-LIVE = "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+LIVE = patched_binary()
 RIGHT = b"\x1b[C"
-WS = os.path.expanduser("~/Developer/_claude-lab/workspace")
+WS = WORKSPACE
 
 for f in glob.glob(os.path.join(WS, ".claude", "queue-*.json")):
     os.remove(f)
@@ -28,7 +31,7 @@ def tail(lab, tag, n=9):
 
 
 print("--- session 1: park a message ---")
-lab = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab.start()
 lab.send("p say ZEBRA and nothing else", label="park")
 lab._pump(6)
@@ -37,7 +40,7 @@ lab.stop()
 
 time.sleep(2)
 print("\n--- session 2: restore, then cycle it to waits ---")
-lab2 = Lab(binary=LIVE, model="haiku", cols=100, rows=44)
+lab2 = Lab(workspace=WS, binary=LIVE, model="haiku", cols=100, rows=44)
 lab2.start()
 lab2._pump(6)
 tail(lab2, "after restart")

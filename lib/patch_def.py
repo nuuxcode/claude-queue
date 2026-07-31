@@ -763,6 +763,32 @@ def _mode_arrows(m):
              dir="1" if m.group("key") == "right" else "-1")
 
 
+def _escape_keeps_paused(m):
+    """Escape empties the queue into the editor. It must leave parked rows.
+
+    Pressing Escape hands the whole queue back as text you can edit, joined by
+    newlines. That is stock behaviour and it is a reasonable answer for waiting
+    messages: you stopped the turn, so here is everything that was about to
+    run.
+
+    A parked message was never about to run. Escape is also the way to the
+    rewind picker, so wanting to go back a few turns silently emptied a thought
+    you had deliberately set aside, and pressing Escape again did not bring it
+    back.
+
+    The split here asks one question, is this row editable, and parked rows are
+    editable: that is the point, you can pull one back and change it. So the
+    question becomes editable AND not parked. The other side is already kept
+    and pushed back in order, so parked rows join it and stay where they were.
+    """
+    return (
+        '{{{ed}:{e}=[],{ne}:{n}=[]}}={split}([...{arr}],({c})=>'
+        '{l9}({c})&&{c}.priority!=="{paused}"?"{ed}":"{ne}")'
+    ).format(ed=m.group("ed"), e=m.group("e"), ne=m.group("ne"),
+             n=m.group("n"), split=m.group("split"), arr=m.group("arr"),
+             c=m.group("c"), l9=m.group("l9"), paused=PAUSED)
+
+
 def _work_only(m):
     """A paused message is not work, so it must not make the session look busy.
 
@@ -1619,6 +1645,16 @@ press ctrl+enter while pointing at one to run it now.
                 r'function (?P<o>\w+)\(\)\{return (?P=arr)\.length>0\}'
             ),
             _work_only,
+        ),
+        Edit(
+            "escape leaves parked messages alone",
+            re.compile(
+                r'\{(?P<ed>editable):(?P<e>\w+)=\[\],'
+                r'(?P<ne>nonEditable):(?P<n>\w+)=\[\]\}'
+                r'=(?P<split>\w+)\(\[\.\.\.(?P<arr>\w+)\],\((?P<c>\w+)\)=>'
+                r'(?P<l9>\w+)\((?P=c)\)\?"editable":"nonEditable"\)'
+            ),
+            _escape_keeps_paused,
         ),
         # Last on purpose. It rewrites the queue's "something changed" call,
         # which is the shape three earlier edits use to find their way around

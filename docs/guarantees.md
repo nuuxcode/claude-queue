@@ -73,8 +73,8 @@ RUNNING
                              default; a marker still wins
   Escape, editor empty    -> stops the turn; waiting messages are kept and
                              the first one starts
-  Escape while editing    -> stops the turn AND empties the whole queue into
-                             the editor, joined, exactly like stock
+  Escape while editing    -> stops the turn AND empties the queue into the
+                             editor, joined, like stock. Parked messages stay
 
 NEXT TOOL BOUNDARY
   interrupting messages are collected here
@@ -90,6 +90,7 @@ WHILE MESSAGES WAIT
 
   reading the queue leaves it free to drain; changing a mode freezes it
   until ctrl+enter, stepping off the list, or typing anything
+  escape empties waiting messages into the editor and leaves parked ones
 
 TURN FINISHED
   the oldest waiting message starts, as its own turn
@@ -127,6 +128,7 @@ TURN FINISHED
 | 22 | **A queue is only ever restored into the session that saved it** | fixed in 2.2.0; deterministic regression green, and driven across six live sessions | 2.1.0 fell back to the newest file in the project when the id did not match, which every brand new session also does, so queues leaked between terminals. The unit tests that asserted the old behaviour were rewritten; `CLAUDE_QUEUE_ADOPT=on` keeps it available |
 | 23 | **A long pasted marker is honoured** | fixed in 2.2.0 | Pasted text accepted only the colon form, so a dictated paragraph starting `p ` ran instead of parking. It now asks whether the message STARTS with something pasted, and a pasted space-marker counts when a letter or digit follows, which keeps `q = deque()` one intact message. Affected `q` and `s` equally in 2.1.0 |
 | 24 | **Waiting for background work does not hold the queue** | not a promise this patch makes, measured so it is not mistaken for one | Both background states were driven against an unpatched control: a background agent alive for 108 seconds, and bash pushed back with ctrl+B. Queued messages drained while both were still running, identically on stock. The screen saying "Waiting for 1 background agent to finish" is not a stopped queue |
+| 25 | **Escape does not take a parked message** | kept, and it was reported broken | Escape empties the queue into the editor, which is right for waiting messages and wrong for parked ones, and Escape is also the way to the rewind picker. `test_escape.py`, 7 checks; 4 of them fail on the build before the fix. Writing that test took three attempts, because Escape mid-turn only stops the turn, and a waiting message in the same queue starts its own turn so the next Escape stops that instead. Both earlier versions reported PASS against the broken build |
 
 The stock-behavior comparisons run against an **unpatched control binary**.
 Those are gaps G2 and G6, reorder R5, and manage D6. Other checks exercise only
@@ -218,6 +220,13 @@ queue is emptied into the editor, joined, and nothing runs until you send. That 
 is delivered at once instead. If you want everything to stop, stop the turn and
 then delete what is waiting.
 
+**Parked messages are the exception, since 2.2.0.** Escape leaves them in the
+queue. Waiting messages still come back into the editor exactly as before,
+because for those it is the right answer: you stopped the turn, so here is what
+was about to run. A parked message was never about to run, and Escape is also
+how you reach the rewind picker, so going back a few turns used to quietly
+empty a thought you had deliberately set aside.
+
 ### This is the terminal only
 
 The patch changes the Claude Code executable on your machine. Desktop, the VS
@@ -255,8 +264,8 @@ temporal context is still missing.
 
 ## What is tested
 
-One hundred twenty-one scenarios, listed in
-[the scenario ledger](../harness/behaviour/SCENARIOS.md) with 112 of them
+One hundred fifty-nine scenarios, listed in
+[the scenario ledger](../harness/behaviour/SCENARIOS.md) with 148 of them
 tested and every gap named in place, were written down **before** they were
 tested, covering markers, queue mechanics, the selector, the keys, reordering,
 removal, splitting, the tab key, the fold and persistence.

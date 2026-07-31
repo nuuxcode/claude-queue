@@ -1,8 +1,10 @@
-import glob, os, sys, time
-sys.path.insert(0, os.path.expanduser("~/Developer/_claude-lab"))
+import glob, os, pathlib, sys, time
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import WORKSPACE, patched_binary  # noqa: E402
 from lab import Lab
-LIVE="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-WS=os.path.expanduser("~/Developer/_claude-lab/workspace")
+LIVE = patched_binary()
+WS = WORKSPACE
 HIS = ("p Okay, so we did pass one for request one and request two, then we did pass two, "
 "then we did pass three. Now, this is a lot of MD files and a lot of data. So, to present "
 "this in a demo tomorrow, it will be a little bit hard 'cause I can't just open it and read those MD files.\n"
@@ -22,7 +24,7 @@ def qrows(l): return [x.strip() for x in l.screen().splitlines()
                       if "[waits" in x or "[jumps in" in x or "[paused" in x]
 
 clean()
-lab=Lab(binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
+lab=Lab(workspace=WS, binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
 try:
     # 1. paste the WHOLE thing, marker included, while idle
     bracket_paste(lab, HIS); lab.write(b"\r"); lab._pump(6)
@@ -36,7 +38,7 @@ finally:
     lab.stop(); clean()
 
 # 4. typed marker + pasted body
-lab=Lab(binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
+lab=Lab(workspace=WS, binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
 try:
     lab.type("p ")
     bracket_paste(lab, HIS[2:])
@@ -48,7 +50,7 @@ finally:
     lab.stop(); clean()
 
 # 5. pasted code must stay literal
-lab=Lab(binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
+lab=Lab(workspace=WS, binary=LIVE,model="haiku",cols=100,rows=44); lab.start()
 try:
     bracket_paste(lab, "q = deque()\nprint(q)")
     lab.write(b"\r"); lab._pump(6)

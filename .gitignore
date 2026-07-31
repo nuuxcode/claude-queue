@@ -42,3 +42,9 @@ harness/behaviour/ux-*/
 harness/behaviour/workspace*/
 harness/behaviour/hd-*
 harness/behaviour/sp3-*/
+
+# The throwaway project the paused-mode suites run sessions in, and the screen
+# dumps they save. Both hold prompt text and the signed-in account's banner, so
+# neither may reach a commit.
+harness/behaviour/paused-mode/workspace/
+*-evidence.txt

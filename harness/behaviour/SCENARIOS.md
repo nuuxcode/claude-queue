@@ -7,20 +7,25 @@ discovered.
 
 Legend: **T** tested and passing · **G** gap, not tested · **R** risky, reason given
 
-**144 scenarios, 134 tested.** One of them, B7, is a statistical result rather
-than a deterministic one; the reason is below. Of the ten not driven, three are
-reasoned from the code and say so in place, and the rest are gaps with the
+**159 scenarios, 148 tested.** Counted from the rows below, which is worth
+saying because the header used to read 121 while the table already held 133
+rows. Whatever rule produced that number is lost, so this one is now simply
+"every row with an id, and how many of them start with T". One of them, B7, is
+a statistical result rather
+than a deterministic one; the reason is below. Of the eleven not driven, four
+are reasoned from the code and say so in place, and the rest are gaps with the
 reason next to them; three of those are choices rather than omissions, because
 a shell command, a pasted image and a near-full-context compaction are things
 this deliberately does not do or cannot afford. Every row marked T names the
 file that tests it. The stock-behavior comparisons use an unpatched control;
 the remaining rows exercise the patched behavior they claim.
 
-Sections L and M arrived in 2.2.0, with parking, and with two bugs that were
-in the released 2.1.0 and hit `q` and `s` as hard as `p`: queues leaking
-between sessions, and a long pasted marker being ignored. Both were found by
-using it. Neither was found by this list, which is the honest verdict on what
-a written scenario ledger is for: it finds what you thought of.
+Sections L and M arrived in 2.2.0, with parking, and with three bugs: two that
+were in the released 2.1.0 and hit `q` and `s` as hard as `p`, queues leaking
+between sessions and a long pasted marker being ignored, plus Escape taking a
+parked message with it. All three were found by using it. None was found by
+this list, which is the honest verdict on what a written scenario ledger is
+for: it finds what you thought of.
 
 ---
 
@@ -246,6 +251,9 @@ message without a single new condition on the running path.
 | L17 | `q` and `s` are unchanged by all of the above | T | test_regress, 8 checks |
 | L18 | a long dictated paste starting `p ` parks instead of running | T, and this is a fix to 2.1.0 that affected `q` and `s` equally: pasted text accepted only the colon form | test_longpaste, 5 checks |
 | L19 | pasted code containing `q = deque()` stays one intact message | T. The paste rule accepts a space marker only when a letter or digit follows it, which is what separates a sentence from an assignment | test_longpaste |
+| L20 | **Escape does not take a parked message** | T, reported broken. Escape empties the queue into the editor, which is right for waiting messages and wrong for parked ones, and Escape is also the route to the rewind picker, so going back through your own history emptied what you had set aside | test_escape A1 to A4 and B1 to B3. Four of the seven fail on the build before the fix |
+| L21 | Escape still hands waiting messages back, unchanged | T | test_regress, plus the existing escape rows in section D |
+| L22 | the harness reaching L20 at all | R, and it took three attempts. Escape mid-turn only STOPS the turn and never touches the queue, so a single mid-turn Escape passed against the broken build. Adding a waiting message to the same queue does not help either: stopping the turn starts that message, so the next Escape stops the new turn and the pop path is still never reached. Reading the input box cannot decide it, because queued rows and the transcript's echo of earlier messages share a prefix. The signal that works is whether the `[paused]` row is still there |
 
 ## M. Background work, which looks like it should hold the queue
 
