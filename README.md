@@ -61,6 +61,24 @@ right when you are ready for it to mean something.
 Nothing here fights the tool: Claude Code already has a queue inside it. This
 patch gives you the controls.
 
+## New in 2.2.0
+
+**If you are already running 2.1.0, update.** Two of these are bugs you have
+today, and one of them stops the patch working the moment you update Claude
+Code itself.
+
+| | |
+|---|---|
+| **Works on Claude Code 2.1.221** | 2.1.0 refuses to apply on it and leaves you unpatched. Nothing about the queue changed in that release, it just renamed things internally, and the patch was reading those names too literally |
+| **A queue belongs to one session** | 2.1.0 handed a new terminal the previous one's saved queue, then saved it forward under its own name. A few terminals in, one file held everything you had ever queued in that project |
+| **Long pasted markers work** | `q`, `s` and `p` were ignored on a long pasted or dictated message, so it ran instead of queuing |
+| **`p` parks a message** | new: it sits in the list and never runs until you say so |
+| **Left and right change a mode** | new: cycle a queued message through waits, jumps in, parked |
+| **`/model` opens mid-turn** | like `/status` and `/usage` already did. It changes nothing Claude is doing, so it does not wait |
+
+Updating is the same command you installed with. Your queue files are not
+touched.
+
 ## Watch it happen
 
 Full demo, with sound:
@@ -206,11 +224,12 @@ bring the queue back; the file is left on disk untouched rather than deleted.
   word. The [recording harness](harness/) ships here, point it at your own
   machine.
 - 159 behaviour scenarios in the ledger, 148 driven, every remaining gap
-  named in place, plus six more suites for parking and the two bugs this
-  release fixes. [The suites ship too](harness/behaviour/).
-- Both bugs fixed here were found by using it, not by testing it, and both are
-  written up with the mistake that hid them. Two test suites had encoded one of
-  them so thoroughly that fixing it turned them red.
+  named in place. [The suites ship too](harness/behaviour/).
+- Every bug fixed in 2.2.0 was found by using this, not by testing it, and
+  each is written up with the mistake that hid it. Two test suites had encoded
+  one of them so thoroughly that fixing the bug turned the suites red. The
+  test for another passed twice against the broken build before it was made to
+  reach the thing it claimed to test.
 - The research measures both dangers. A model interrupted mid-thought lost
   [up to 60% accuracy](https://arxiv.org/abs/2510.11713) in one study. A
   model fed its task in scattered pieces did
