@@ -624,6 +624,31 @@ So this does not build a queue and does not change when the queue is emptied. It
 chooses the priority for your message from the letter you type, and removes that
 letter before the text is sent.
 
+### When a Claude Code update breaks it
+
+Every change here is anchored to a shape in Claude Code's own minified code. If
+an anchor stops matching, the patch refuses and writes nothing, and you keep
+working on unpatched Claude Code until the anchors are updated. That is the
+design, and 2.1.221 is a good example of it working and of how it can be
+provoked by nothing at all:
+
+```
+claude-patch: leaving Claude Code as it is (claude-queue: edit
+'attach the priority' matched 0 times, expected 1.)
+```
+
+Nothing about the queue had changed in that release. What changed was the
+spelling of some names. The minifier renamed the enqueue function, renamed a
+telemetry call, and gave one helper a `$` in its name. Two of those names had
+been written into this patch as literals, and the third broke three anchors
+that described names as `\w+`, which cannot match a `$`.
+
+Both are now impossible to reintroduce quietly. Names that go into replacements
+are looked up by shape, and a test fails the build if any anchor spells a name
+`\w+` instead of `[\w$]+`. The lesson is short enough to keep: **a minified
+name is not a name, it is a coincidence.** Never write one down, and never
+assume how it is spelled.
+
 ### Safety properties
 
 - The change is applied to the copy of Claude Code on your machine. The original

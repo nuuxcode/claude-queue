@@ -113,8 +113,8 @@ arrangement: enter jumps in, tab queues.
 ## Install
 
 Works on the npm install of Claude Code on macOS and Linux. Needs Python 3.9+
-and Node.js. WSL2 is not yet verified. Verified on Claude Code 2.1.220, the
-current npm release, last checked 2026-07-31.
+and Node.js. WSL2 is not yet verified. Verified on Claude Code 2.1.220 and
+2.1.221, the current npm release, last checked 2026-08-04.
 
 The recommended first step is to clone the repository and run the no-change
 check:

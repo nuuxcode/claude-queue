@@ -634,5 +634,58 @@ class MarkerPolicyTests(unittest.TestCase):
                 self.assertEqual(edit_roundtrip(queue), expected)
 
 
+class AnchorSpellingTests(unittest.TestCase):
+    """Anchors must be able to spell every name a minifier can emit.
+
+    Claude Code 2.1.221 renamed a queue helper to `s$t`. Three anchors spelled
+    names as `\\w+`, which cannot match a `$`, so they found nothing, the patch
+    refused to apply, and the update left Claude Code unpatched. Not one line
+    of the code those anchors describe had changed.
+
+    That failure is invisible until someone updates, and the person updating is
+    never the person who wrote the anchor. So it is a test, not a note.
+    """
+
+    def test_no_anchor_spells_a_name_with_backslash_w(self):
+        offenders = [e.name for e in patch_def.PATCH.edits
+                     if r"\w+" in e.anchor.pattern]
+        self.assertEqual(
+            offenders, [],
+            "these anchors use \\w+, which cannot match a $ in a minified "
+            "name; use [\\w$]+ instead: " + ", ".join(offenders))
+
+    def test_every_regex_in_the_module_accepts_dollar(self):
+        """The by-shape name lookups have the same hazard as the anchors."""
+        source = Path(patch_def.__file__).read_text(encoding="utf-8")
+        bad = [ln.strip() for ln in source.splitlines()
+               if r"\w+" in ln and not ln.strip().startswith("#")]
+        self.assertEqual(
+            bad, [],
+            "every regex in patch_def must spell names as [\\w$]+: "
+            + "; ".join(bad))
+
+
+class NameLookupTests(unittest.TestCase):
+    """Names written INTO the replacements cannot be hardcoded either.
+
+    2.1.221 also renamed the enqueue function and a telemetry call, both of
+    which had been literals in the replacement text. Those now come from a
+    match group or a by-shape lookup, and the lookup has to fail loudly rather
+    than quietly pick the wrong one.
+    """
+
+    def test_enqueue_is_found_by_the_property_it_is_bound_from(self):
+        self.assertEqual(
+            patch_def._enqueue_name("var a=1,Pv=Ly.enqueue,b=2;"), "Pv")
+        self.assertEqual(
+            patch_def._enqueue_name("var s$t=q$.enqueue;"), "s$t")
+
+    def test_enqueue_lookup_refuses_when_it_is_not_unique(self):
+        for js in ("nothing here at all", "a=x.enqueue;b=y.enqueue;"):
+            with self.subTest(js=js):
+                with self.assertRaises(patch_def.PatchError):
+                    patch_def._enqueue_name(js)
+
+
 if __name__ == "__main__":
     unittest.main()

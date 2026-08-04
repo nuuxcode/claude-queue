@@ -85,6 +85,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ccpatch import Edit, Patch, PatchError, main  # noqa: E402
 
+# Anchors below match minified names with [\w$]+, never \w+.
+#
+# `$` is a legal identifier character in JavaScript and minifiers use it
+# freely. Claude Code 2.1.221 renamed a queue helper to `s$t`, three anchors
+# stopped matching, the patch refused to apply, and the update left Claude Code
+# unpatched. Nothing about the code those anchors describe had changed: the
+# anchors simply could not spell the new names.
+#
+# The same release also renamed the enqueue function and a telemetry call,
+# which were written into replacements as literals. Those are now looked up by
+# shape. Between them, a build with no behavioural change to the queue at all
+# broke the patch in two different ways, so both are worth stating plainly:
+# never hardcode a minified name, and never assume one is spelled [A-Za-z0-9_].
+
 # The short forms are commands. The English words "queue" and "steer" are not:
 # silently eating the first word of "Queue depth is high" is worse than losing
 # two redundant aliases. Pasted multi-job batches use the colon-only form so
@@ -332,19 +346,21 @@ def _priority(m):
     the whole block and carrying it onto each line would be a lie about what
     that line was.
     """
+    enq = m.group("enq")
     return (
         "(__qsx?({fe},void 0):"
-        "xT({{...{cmd},value:{val}.trim(),"
+        "{enq}({{...{cmd},value:{val}.trim(),"
         "preExpansionValue:{cmd}.preExpansionValue?.trim(),"
         "...__qsp?{{priority:__qsp}}:{{}}}}))"
     ).format(
-        cmd=m.group("cmd"), val=m.group("val"),
-        fe=("__qsx.forEach((__qy)=>xT({{...{cmd},value:__qy.v,"
-            "preExpansionValue:void 0,priority:__qy.p}}))").format(cmd=m.group("cmd")),
+        cmd=m.group("cmd"), val=m.group("val"), enq=enq,
+        fe=("__qsx.forEach((__qy)=>{enq}({{...{cmd},value:__qy.v,"
+            "preExpansionValue:void 0,priority:__qy.p}}))").format(
+                cmd=m.group("cmd"), enq=enq),
     )
 
 
-def _idle_split(m):
+def _idle_split(m, js):
     """Split works when Claude is idle too: the first job runs, the rest wait.
 
     Without this, a block of marked lines typed into a session that is doing
@@ -359,20 +375,44 @@ def _idle_split(m):
     running in the same order either way, which is the point.
     """
     return (
-        'be("prompt_submit"),'
+        '{be}("prompt_submit"),'
         '__qsf=__qsx?__qsx.find((__qy)=>__qy.p!=="{paused}")??__qsx[0]:null,'
         "__qsx&&__qsx.forEach((__qy)=>{{if(__qy!==__qsf)"
-        "xT({{...{j},value:__qy.v,preExpansionValue:void 0,"
+        "{enq}({{...{j},value:__qy.v,preExpansionValue:void 0,"
         "priority:__qy.p}})}}),"
         "await {fn}({{inputSource:{a},queuedCommands:["
         "__qsf?{{...{j},value:__qsf.v,preExpansionValue:void 0,"
         "...__qsf.p?{{priority:__qsf.p}}:{{}}}}:{j}],"
-    ).format(fn=m.group("fn"), a=m.group("a"), j=m.group("j"), paused=PAUSED)
+    ).format(fn=m.group("fn"), a=m.group("a"), j=m.group("j"), paused=PAUSED,
+             enq=_enqueue_name(js), be=m.group("be"))
+
+def _enqueue_name(js):
+    """The queue's own enqueue function, found by the property it is taken from.
+
+    This used to be written into the replacements as a literal, and 2.1.221
+    renamed it from `xT` to `Pv`, which stopped the patch dead: the anchor
+    matched zero times, the guard refused, and Claude Code ran unpatched. That
+    is the guard working, but the anchor should never have been able to break
+    that way. Minified letters are reshuffled by any release.
+
+    The queue module exposes its operations as properties on one object, and
+    those property names survive minification because they are read by name.
+    So ask for the thing that is assigned from `.enqueue`, whatever it happens
+    to be called today.
+    """
+    hits = list(re.finditer(r"([\w$]+)=[\w$]+\.enqueue\b", js))
+    if len(hits) != 1:
+        raise PatchError(
+            f"claude-queue: expected exactly one enqueue binding in the queue "
+            f"module, found {len(hits)}. "
+            "Claude Code's internals changed; refusing to guess.")
+    return hits[0].group(1)
+
 
 def _tab_names(js):
     """The submit callback and the just-submitted flag, found by shape."""
     hits = list(re.finditer(
-        r"if\((\w+)\)\1\((\w+)\.text\),(\w+)=!0;return \2\}", js))
+        r"if\(([\w$]+)\)\1\(([\w$]+)\.text\),([\w$]+)=!0;return \2\}", js))
     if len(hits) != 1:
         raise PatchError(
             f"claude-queue: expected exactly one submit path in the text input, "
@@ -479,14 +519,14 @@ def _queue_names(js):
         return hits.pop()
 
     return {
-        "popat": find(r"(\w+)=\w+\.popEditableAt\b", "popEditableAt binding"),
-        "getq": find(r"(\w+)=\w+\.getCommandQueue,", "getCommandQueue binding"),
+        "popat": find(r"([\w$]+)=[\w$]+\.popEditableAt\b", "popEditableAt binding"),
+        "getq": find(r"([\w$]+)=[\w$]+\.getCommandQueue,", "getCommandQueue binding"),
         # The editable predicate, taken from the one place it is used bare.
-        "editable": find(r"\.getCommandQueue\(\)\.some\((\w+)\)\}", "editable test"),
+        "editable": find(r"\.getCommandQueue\(\)\.some\(([\w$]+)\)\}", "editable test"),
         # The queue's own "something changed" call: refreezes the snapshot the
         # UI reads and emits. Anything that mutates the array has to end on it.
         "notify": find(
-            r"function (\w+)\(\)\{\w+=Object\.freeze\(\[\.\.\.\w+\]\),\w+\.emit\(\)\}",
+            r"function ([\w$]+)\(\)\{[\w$]+=Object\.freeze\(\[\.\.\.[\w$]+\]\),[\w$]+\.emit\(\)\}",
             "queue notifier",
         ),
     }
@@ -519,11 +559,11 @@ def _session_names(js):
 
     return {
         "state": find(
-            r"function \w+\(\)\{return \w+\(\)\?\.sessionId\?\?(\w+)\.sessionId\}",
+            r"function [\w$]+\(\)\{return [\w$]+\(\)\?\.sessionId\?\?([\w$]+)\.sessionId\}",
             "session state object",
         ),
         "agent": find(
-            r"function \w+\(\w+\)\{return \w+\.agentId===(\w+)\(\)\}",
+            r"function [\w$]+\([\w$]+\)\{return [\w$]+\.agentId===([\w$]+)\(\)\}",
             "agent id getter",
         ),
     }
@@ -1333,8 +1373,8 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "remember bracketed paste as literal input",
             re.compile(
-                r'function (?P<fn>\w+)\((?P<arg>\w+)\)\{(?P<guard>\w+)\.current=!1;'
-                r'let (?P<text>\w+)=(?P<clean>\w+)\((?P=arg)\)\.replace\('
+                r'function (?P<fn>[\w$]+)\((?P<arg>[\w$]+)\)\{(?P<guard>[\w$]+)\.current=!1;'
+                r'let (?P<text>[\w$]+)=(?P<clean>[\w$]+)\((?P=arg)\)\.replace\('
                 r'/\\r\\n\|\\r/g,`\n`\)\.replaceAll\("\\t","    "\);'
             ),
             _remember_paste,
@@ -1342,16 +1382,16 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "resolve the marker",
             re.compile(
-                r"let (?P<cmd>\w+)=\{agentId:\w+\(\),value:(?P<val>\w+),"
-                r'preExpansionValue:\w+\.\w+==="suggestion_accepted"\?void 0:(?P<raw>\w+),'
-                r"mode:(?P<mode>\w+),"
+                r"let (?P<cmd>[\w$]+)=\{agentId:[\w$]+\(\),value:(?P<val>[\w$]+),"
+                r'preExpansionValue:[\w$]+\.[\w$]+==="suggestion_accepted"\?void 0:(?P<raw>[\w$]+),'
+                r"mode:(?P<mode>[\w$]+),"
             ),
             _resolve,
         ),
         Edit(
             "attach the priority",
             re.compile(
-                r"xT\(\{\.\.\.(?P<cmd>\w+),value:(?P<val>\w+)\.trim\(\),"
+                r"(?P<enq>[\w$]+)\(\{\.\.\.(?P<cmd>[\w$]+),value:(?P<val>[\w$]+)\.trim\(\),"
                 r"preExpansionValue:(?P=cmd)\.preExpansionValue\?\.trim\(\)\}\)"
             ),
             _priority,
@@ -1359,7 +1399,7 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "let /model open while Claude is working",
             re.compile(
-                r'function (?P<fn>\w+)\(\)\{return (?P<gate>\w+)\('
+                r'function (?P<fn>[\w$]+)\(\)\{return (?P<gate>[\w$]+)\('
                 r'"tengu_immediate_model_command",!1\)\}'
             ),
             _model_now,
@@ -1367,73 +1407,73 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "no turn clock for a submission that only pauses",
             re.compile(
-                r'if\((?P<wf>\w+)\(\((?P<js>\w+)\)=>(?P=js)\+1\),'
-                r'(?P<dr>\w+)\.clearBuffer\(\),(?P<oue>\w+)\.current=!1,'
-                r'!(?P<jn>\w+)&&(?P<ih>\w+)==="prompt"'
-                r'&&!(?P<oe>\w+)\.isRemoteMode\)'
-                r'(?P<oh>\w+)\((?P<yt>\w+)\),(?P<oo>\w+)\(\)'
+                r'if\((?P<wf>[\w$]+)\(\((?P<js>[\w$]+)\)=>(?P=js)\+1\),'
+                r'(?P<dr>[\w$]+)\.clearBuffer\(\),(?P<oue>[\w$]+)\.current=!1,'
+                r'!(?P<jn>[\w$]+)&&(?P<ih>[\w$]+)==="prompt"'
+                r'&&!(?P<oe>[\w$]+)\.isRemoteMode\)'
+                r'(?P<oh>[\w$]+)\((?P<yt>[\w$]+)\),(?P<oo>[\w$]+)\(\)'
             ),
             _no_turn_for_paused,
         ),
         Edit(
             "a paused message queues even when nothing is running",
             re.compile(
-                r'if\((?P<r>\w+)\.isActive\|\|(?P<n>\w+)\)\{'
-                r'if\((?P<o>\w+)!=="prompt"&&(?P=o)!=="bash"\)\{'
-                r'(?P<pe>\w+)\("prompt_queued","mode_not_queueable"\);return\}'
+                r'if\((?P<r>[\w$]+)\.isActive\|\|(?P<n>[\w$]+)\)\{'
+                r'if\((?P<o>[\w$]+)!=="prompt"&&(?P=o)!=="bash"\)\{'
+                r'(?P<pe>[\w$]+)\("prompt_queued","mode_not_queueable"\);return\}'
             ),
             _queue_when_paused,
         ),
         Edit(
             "split when idle too: first job runs, the rest wait",
             re.compile(
-                r'be\("prompt_submit"\),await (?P<fn>\w+)\(\{inputSource:'
-                r'(?P<a>[^,]+),queuedCommands:\[(?P<j>\w+)\],'
+                r'(?P<be>[\w$]+)\("prompt_submit"\),await (?P<fn>[\w$]+)\(\{inputSource:'
+                r'(?P<a>[^,]+),queuedCommands:\[(?P<j>[\w$]+)\],'
             ),
             _idle_split,
         ),
         Edit(
             "tab sends with the opposite timing",
             re.compile(
-                r'case"return":if\((?P<k>\w+)\.ctrl\)return;return (?P<ae>\w+)\((?P=k)\);'
-                r'case"enter":return (?P<w>\w+)\.insert\(`\n`\);case"tab":return\}'
+                r'case"return":if\((?P<k>[\w$]+)\.ctrl\)return;return (?P<ae>[\w$]+)\((?P=k)\);'
+                r'case"enter":return (?P<w>[\w$]+)\.insert\(`\n`\);case"tab":return\}'
             ),
             _tab_key,
         ),
         Edit(
             "never abort while waiting",
             re.compile(
-                r"if\((?P<e>\w+)\.hasInterruptibleToolInProgress\)\{"
-                r"(?P<log>\w+\(`\[interrupt\])"
+                r"if\((?P<e>[\w$]+)\.hasInterruptibleToolInProgress\)\{"
+                r"(?P<log>[\w$]+\(`\[interrupt\])"
             ),
             _no_abort,
         ),
         Edit(
             "run waiting messages one at a time",
             re.compile(
-                r'if\((?P<slash>\w+)\((?P<t>\w+)\)\|\|(?P=t)\.mode==="bash"\)\{'
-                r'let (?P<i>\w+)=\[(?P<one>\w+)\(\((?P<s>\w+)\)=>(?P=s)===(?P=t)\)\];'
-                r'return (?P<reg>\w+)\((?P=i)\),(?P<exec>\w+)\((?P=i)\)'
-                r'\.finally\(\(\)=>(?P<unreg>\w+)\((?P=i)\)\),\{processed:!0\}\}'
-                r'let (?P<r>\w+)=(?P=t)\.mode,(?P<n>\w+)=(?P<deqall>\w+)\(\((?P<o>\w+)\)=>'
-                r'(?P<qh>\w+)\((?P=o)\)&&!(?P=slash)\((?P=o)\)&&(?P=o)\.mode===(?P=r)\);'
+                r'if\((?P<slash>[\w$]+)\((?P<t>[\w$]+)\)\|\|(?P=t)\.mode==="bash"\)\{'
+                r'let (?P<i>[\w$]+)=\[(?P<one>[\w$]+)\(\((?P<s>[\w$]+)\)=>(?P=s)===(?P=t)\)\];'
+                r'return (?P<reg>[\w$]+)\((?P=i)\),(?P<exec>[\w$]+)\((?P=i)\)'
+                r'\.finally\(\(\)=>(?P<unreg>[\w$]+)\((?P=i)\)\),\{processed:!0\}\}'
+                r'let (?P<r>[\w$]+)=(?P=t)\.mode,(?P<n>[\w$]+)=(?P<deqall>[\w$]+)\(\((?P<o>[\w$]+)\)=>'
+                r'(?P<qh>[\w$]+)\((?P=o)\)&&!(?P=slash)\((?P=o)\)&&(?P=o)\.mode===(?P=r)\);'
             ),
             _one_at_a_time,
         ),
         Edit(
             "say what each queued message will do",
             re.compile(
-                r"function (?P<fn>\w+)\((?P<arg>\w+)\)\{let (?P<v>\w+)=(?P=arg)\.value;"
+                r"function (?P<fn>[\w$]+)\((?P<arg>[\w$]+)\)\{let (?P<v>[\w$]+)=(?P=arg)\.value;"
                 r'if\((?P=arg)\.mode==="bash"&&typeof (?P=v)==="string"\)'
                 r"(?P=v)=`<bash-input>\$\{(?P=v)\}</bash-input>`;"
-                r"return (?P<mk>\w+)\(\{content:(?P=v)\}\)\}"
+                r"return (?P<mk>[\w$]+)\(\{content:(?P=v)\}\)\}"
             ),
             _label,
         ),
         Edit(
             "work out the folded form of a queued message",
             re.compile(
-                r"function (?P<fn>\w+)\((?P<arg>\w+)\)\{"
+                r"function (?P<fn>[\w$]+)\((?P<arg>[\w$]+)\)\{"
                 r"return (?P=arg)\.queueEditIndex\}"
             ),
             _fold_fn,
@@ -1441,19 +1481,19 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "fold every queued row except the highlighted one",
             re.compile(
-                r"(?P<mk>\w+)=\((?P<msg>\w+),(?P<ix>\w+)\)=>(?P<jx>\w+)\.jsx\("
-                r"(?P<row>\w+),\{isFirst:(?P=ix)===0,"
-                r"useBriefLayout:(?P<brief>\w+),"
-                r'selectionHighlight:(?P<any>\w+)\?(?P=ix)===(?P<sel>\w+)'
+                r"(?P<mk>[\w$]+)=\((?P<msg>[\w$]+),(?P<ix>[\w$]+)\)=>(?P<jx>[\w$]+)\.jsx\("
+                r"(?P<row>[\w$]+),\{isFirst:(?P=ix)===0,"
+                r"useBriefLayout:(?P<brief>[\w$]+),"
+                r'selectionHighlight:(?P<any>[\w$]+)\?(?P=ix)===(?P<sel>[\w$]+)'
                 r'\?"on":"off":void 0,'
-                r"children:(?P=jx)\.jsx\((?P<rend>\w+),\{message:(?P=msg),"
+                r"children:(?P=jx)\.jsx\((?P<rend>[\w$]+),\{message:(?P=msg),"
             ),
             _fold_rows,
         ),
         Edit(
             "bring back one queued message, not all of them",
             re.compile(
-                r"let (?P<w>\w+)=\w+\((?P<t>\w+),(?P<c>\w+)\);"
+                r"let (?P<w>[\w$]+)=[\w$]+\((?P<t>[\w$]+),(?P<c>[\w$]+)\);"
                 r"if\(!(?P=w)\)return!1;(?P<rest>.{0,400}?)"
                 r'"input_queue_pop_to_edit"'
             ),
@@ -1462,15 +1502,15 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "let the up arrow pick a queued message",
             re.compile(
-                r"if\((?P<sv>\w+)\(\)\)\{let (?P<b>\w+)=(?P<ht>\w+)\.getState\(\)"
-                r"\.queueEditIndex;if\((?P=b)===null&&(?P<rn>\w+)>0\)"
+                r"if\((?P<sv>[\w$]+)\(\)\)\{let (?P<b>[\w$]+)=(?P<ht>[\w$]+)\.getState\(\)"
+                r"\.queueEditIndex;if\((?P=b)===null&&(?P<rn>[\w$]+)>0\)"
             ),
             _enable_selector,
         ),
         Edit(
             "let the down arrow pick a queued message",
             re.compile(
-                r"if\((?P<sv>\w+)\(\)\)\{let (?P<rn>\w+)=(?P<ht>\w+)\.getState\(\)"
+                r"if\((?P<sv>[\w$]+)\(\)\)\{let (?P<rn>[\w$]+)=(?P<ht>[\w$]+)\.getState\(\)"
                 r"\.queueEditIndex;if\((?P=rn)!==null\)\{"
             ),
             _enable_selector,
@@ -1478,24 +1518,24 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "edit only the message you picked",
             re.compile(
-                r"if\((?P<sv>\w+)\(\)&&(?P<bo>\w+)\.queueEditIndex!==null"
-                r"&&(?P<pv>\w+)\(\)\)return;"
+                r"if\((?P<sv>[\w$]+)\(\)&&(?P<bo>[\w$]+)\.queueEditIndex!==null"
+                r"&&(?P<pv>[\w$]+)\(\)\)return;"
             ),
             _enable_selector,
         ),
         Edit(
             "remember which slot a message came from",
             re.compile(
-                r"let (?P<i>\w+)=(?P<ht>\w+)\.getState\(\)\.queueEditIndex;"
+                r"let (?P<i>[\w$]+)=(?P<ht>[\w$]+)\.getState\(\)\.queueEditIndex;"
                 r"if\((?P=i)===null\)return!1;"
-                r"let (?P<r>\w+)=(?P<pop>\w+)\((?P=i),(?P<t>\w+),(?P<c>\w+)\);"
+                r"let (?P<r>[\w$]+)=(?P<pop>[\w$]+)\((?P=i),(?P<t>[\w$]+),(?P<c>[\w$]+)\);"
             ),
             _remember_slot,
         ),
         Edit(
             "put an edited message back in its slot",
             re.compile(
-                r"function (?P<fn>\w+)\((?P<a>\w+)\)\{(?P<arr>\w+)\.push\("
+                r"function (?P<fn>[\w$]+)\((?P<a>[\w$]+)\)\{(?P<arr>[\w$]+)\.push\("
                 r"\{\.\.\.(?P=a),priority:(?P=a)\.priority\?\?\"next\","
                 r"timestamp:(?P=a)\.timestamp\?\?new Date\(\)\.toISOString\(\)\}\),"
                 r"(?P<tail>[^}]*\})"
@@ -1505,8 +1545,8 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "teach the queue to swap two waiting messages",
             re.compile(
-                r"function (?P<y>\w+)\((?P<p>\w+)\)\{let (?P<o>\w+)=(?P<pri>\w+)\[(?P=p)\];"
-                r"return (?P<arr>\w+)\.filter\(\((?P<c>\w+)\)=>"
+                r"function (?P<y>[\w$]+)\((?P<p>[\w$]+)\)\{let (?P<o>[\w$]+)=(?P<pri>[\w$]+)\[(?P=p)\];"
+                r"return (?P<arr>[\w$]+)\.filter\(\((?P<c>[\w$]+)\)=>"
                 r'(?P=pri)\[(?P=c)\.priority\?\?"next"\]<=(?P=o)\)\}return\{subscribe:'
             ),
             _move_fn,
@@ -1514,20 +1554,20 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "shift with an arrow moves the message you picked",
             re.compile(
-                r'case"up":if\((?P<k>\w+)\.shift\|\|(?P=k)\.ctrl\|\|(?P=k)\.meta\)return;'
-                r'return (?P<up>\w+)\(\);'
+                r'case"up":if\((?P<k>[\w$]+)\.shift\|\|(?P=k)\.ctrl\|\|(?P=k)\.meta\)return;'
+                r'return (?P<up>[\w$]+)\(\);'
                 r'case"down":if\((?P=k)\.shift\|\|(?P=k)\.ctrl\|\|(?P=k)\.meta\)return;'
-                r'return (?P<dn>\w+)\(\);'
+                r'return (?P<dn>[\w$]+)\(\);'
             ),
             _shift_arrows,
         ),
         Edit(
             "connect the move key to the highlighted message",
             re.compile(
-                r"let (?P<ht>\w+)=\w+\(\),(?P<mt>\w+)=\w+\(\),(?P<gr>\w+)="
-                r"\w+\(\((?P<w1>\w+)\)=>(?P=w1)\.queueEditIndex\),"
-                r"(?P<lr>\w+)=(?P<pi>\w+)\.useCallback\(\((?P<w>\w+)\)=>\{"
-                r"(?P=mt)\(\((?P<rn>\w+)\)=>(?P=rn)\.queueEditIndex===(?P=w)\?(?P=rn):"
+                r"let (?P<ht>[\w$]+)=[\w$]+\(\),(?P<mt>[\w$]+)=[\w$]+\(\),(?P<gr>[\w$]+)="
+                r"[\w$]+\(\((?P<w1>[\w$]+)\)=>(?P=w1)\.queueEditIndex\),"
+                r"(?P<lr>[\w$]+)=(?P<pi>[\w$]+)\.useCallback\(\((?P<w>[\w$]+)\)=>\{"
+                r"(?P=mt)\(\((?P<rn>[\w$]+)\)=>(?P=rn)\.queueEditIndex===(?P=w)\?(?P=rn):"
                 r"\{\.\.\.(?P=rn),queueEditIndex:(?P=w)\}\)\},\[(?P=mt)\]\)"
             ),
             _install_reorder,
@@ -1535,10 +1575,10 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "delete removes the message you picked",
             re.compile(
-                r'case"backspace":if\((?P<k>\w+)\.superKey\)return (?P<ce>\w+)\(\);'
-                r'if\((?P=k)\.meta\|\|(?P=k)\.ctrl\)return (?P<se>\w+)\(\);'
-                r'return (?P<w>\w+)\.deleteTokenBefore\(\)\?\?(?P=w)\.backspace\(\);'
-                r'case"delete":if\((?P=k)\.superKey\)return (?P<oe>\w+)\(\);'
+                r'case"backspace":if\((?P<k>[\w$]+)\.superKey\)return (?P<ce>[\w$]+)\(\);'
+                r'if\((?P=k)\.meta\|\|(?P=k)\.ctrl\)return (?P<se>[\w$]+)\(\);'
+                r'return (?P<w>[\w$]+)\.deleteTokenBefore\(\)\?\?(?P=w)\.backspace\(\);'
+                r'case"delete":if\((?P=k)\.superKey\)return (?P<oe>[\w$]+)\(\);'
                 r'if\((?P=k)\.meta\)return (?P=oe)\(\);return (?P=w)\.del\(\);'
             ),
             _delete_key,
@@ -1546,20 +1586,20 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "forget the slot when you clear the editor",
             re.compile(
-                r"(?P<it>\w+)=(?P<pi>\w+)\.useRef\((?P<te>\w+)\);(?P=pi)\.useEffect\(\(\)=>\{"
+                r"(?P<it>[\w$]+)=(?P<pi>[\w$]+)\.useRef\((?P<te>[\w$]+)\);(?P=pi)\.useEffect\(\(\)=>\{"
                 r"if\((?P=it)\.current===(?P=te)\)return;"
-                r"if\((?P=it)\.current=(?P=te),(?P<ht>\w+)\.getState\(\)\.queueEditIndex!==null\)"
-                r"(?P<lr>\w+)\(null\)\},\[(?P=te),(?P=lr),(?P=ht)\]\);"
+                r"if\((?P=it)\.current=(?P=te),(?P<ht>[\w$]+)\.getState\(\)\.queueEditIndex!==null\)"
+                r"(?P<lr>[\w$]+)\(null\)\},\[(?P=te),(?P=lr),(?P=ht)\]\);"
             ),
             _forget_slot,
         ),
         Edit(
             "keep the highlight on the message, not on a position",
             re.compile(
-                r"(?P<cr>\w+)=(?P<hook>\w+)\(\);(?P<pi>\w+)\.useEffect\(\(\)=>\{"
-                r"if\((?P<gr>\w+)===null\)return;"
-                r"let (?P<n>\w+)=(?P<count>\w+)\((?P=cr),(?P<ed>\w+)\);"
-                r"if\((?P=n)===0\)(?P<lr>\w+)\(null\);"
+                r"(?P<cr>[\w$]+)=(?P<hook>[\w$]+)\(\);(?P<pi>[\w$]+)\.useEffect\(\(\)=>\{"
+                r"if\((?P<gr>[\w$]+)===null\)return;"
+                r"let (?P<n>[\w$]+)=(?P<count>[\w$]+)\((?P=cr),(?P<ed>[\w$]+)\);"
+                r"if\((?P=n)===0\)(?P<lr>[\w$]+)\(null\);"
                 r"else if\((?P=gr)>(?P=n)-1\)(?P=lr)\((?P=n)-1\)"
                 r"\},\[(?P=cr),(?P=gr),(?P=lr)\]\);"
             ),
@@ -1592,36 +1632,36 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "give a message its marker back when you edit it",
             re.compile(
-                r"function (?P<fn>\w+)\((?P<i>\w+),(?P<cur>\w+),(?P<off>\w+)\)\{"
-                r"let (?P<c>\w+)=(?P<arr>\w+)\.filter\((?P<ed>\w+)\)\[(?P=i)\];"
+                r"function (?P<fn>[\w$]+)\((?P<i>[\w$]+),(?P<cur>[\w$]+),(?P<off>[\w$]+)\)\{"
+                r"let (?P<c>[\w$]+)=(?P<arr>[\w$]+)\.filter\((?P<ed>[\w$]+)\)\[(?P=i)\];"
                 r"if\(!(?P=c)\)return;"
-                r"let (?P<v>\w+)=(?P<raw>\w+)\((?P=c)\.value\),"
+                r"let (?P<v>[\w$]+)=(?P<raw>[\w$]+)\((?P=c)\.value\),"
             ),
             _keep_marker,
         ),
         Edit(
             "restore on resume, and hold it until you send something",
             re.compile(
-                r"(?P<pi>\w+)\.useEffect\(\(\)=>\{if\((?P<n>\w+)\|\|"
-                r"(?P<r>\w+)\.isActive\)return;if\((?P<t>\w+)\)return;"
-                r"if\((?P<o>\w+)\.length===0\)return;"
-                r"(?P<call>\w+)\(\{executeInput:(?P<e>\w+)\}\)\},\["
+                r"(?P<pi>[\w$]+)\.useEffect\(\(\)=>\{if\((?P<n>[\w$]+)\|\|"
+                r"(?P<r>[\w$]+)\.isActive\)return;if\((?P<t>[\w$]+)\)return;"
+                r"if\((?P<o>[\w$]+)\.length===0\)return;"
+                r"(?P<call>[\w$]+)\(\{executeInput:(?P<e>[\w$]+)\}\)\},\["
             ),
             _hold_and_restore,
         ),
         Edit(
             "a held queue is not a busy session",
             re.compile(
-                r"mainConversationId:(?P<cid>\w+),mainIsBusy:(?P<bs>\w+)\|\|"
-                r"!!(?P<bn>\w+)\|\|(?P<len>\w+)\(\)>0\}\)"
+                r"mainConversationId:(?P<cid>[\w$]+),mainIsBusy:(?P<bs>[\w$]+)\|\|"
+                r"!!(?P<bn>[\w$]+)\|\|(?P<len>[\w$]+)\(\)>0\}\)"
             ),
             _not_busy_while_held,
         ),
         Edit(
             "left changes the mode of the message you picked",
             re.compile(
-                r'case"(?P<key>left)":if\((?P<k>\w+)\.superKey\)'
-                r'return (?P<w>\w+)\.(?P<home>startOfLine)\(\);'
+                r'case"(?P<key>left)":if\((?P<k>[\w$]+)\.superKey\)'
+                r'return (?P<w>[\w$]+)\.(?P<home>startOfLine)\(\);'
                 r'if\((?P=k)\.ctrl\|\|(?P=k)\.meta\|\|(?P=k)\.fn\)'
                 r'return (?P=w)\.(?P<word>prevWord)\(\);'
             ),
@@ -1630,8 +1670,8 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "right changes the mode of the message you picked",
             re.compile(
-                r'case"(?P<key>right)":if\((?P<k>\w+)\.superKey\)'
-                r'return (?P<w>\w+)\.(?P<home>endOfLine)\(\);'
+                r'case"(?P<key>right)":if\((?P<k>[\w$]+)\.superKey\)'
+                r'return (?P<w>[\w$]+)\.(?P<home>endOfLine)\(\);'
                 r'if\((?P=k)\.ctrl\|\|(?P=k)\.meta\|\|(?P=k)\.fn\)'
                 r'return (?P=w)\.(?P<word>nextWord)\(\);'
             ),
@@ -1640,19 +1680,19 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "a paused message is not pending work",
             re.compile(
-                r'function (?P<x>\w+)\(\)\{return (?P<pr>\w+)\('
-                r'(?P<arr>\w+),(?P<qh>\w+)\)\}'
-                r'function (?P<o>\w+)\(\)\{return (?P=arr)\.length>0\}'
+                r'function (?P<x>[\w$]+)\(\)\{return (?P<pr>[\w$]+)\('
+                r'(?P<arr>[\w$]+),(?P<qh>[\w$]+)\)\}'
+                r'function (?P<o>[\w$]+)\(\)\{return (?P=arr)\.length>0\}'
             ),
             _work_only,
         ),
         Edit(
             "escape leaves parked messages alone",
             re.compile(
-                r'\{(?P<ed>editable):(?P<e>\w+)=\[\],'
-                r'(?P<ne>nonEditable):(?P<n>\w+)=\[\]\}'
-                r'=(?P<split>\w+)\(\[\.\.\.(?P<arr>\w+)\],\((?P<c>\w+)\)=>'
-                r'(?P<l9>\w+)\((?P=c)\)\?"editable":"nonEditable"\)'
+                r'\{(?P<ed>editable):(?P<e>[\w$]+)=\[\],'
+                r'(?P<ne>nonEditable):(?P<n>[\w$]+)=\[\]\}'
+                r'=(?P<split>[\w$]+)\(\[\.\.\.(?P<arr>[\w$]+)\],\((?P<c>[\w$]+)\)=>'
+                r'(?P<l9>[\w$]+)\((?P=c)\)\?"editable":"nonEditable"\)'
             ),
             _escape_keeps_paused,
         ),
@@ -1662,8 +1702,8 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "save the queue, and know how to bring it back",
             re.compile(
-                r"function (?P<fn>\w+)\(\)\{(?P<snap>\w+)=Object\.freeze\("
-                r"\[\.\.\.(?P<arr>\w+)\]\),(?P<em>\w+)\.emit\(\)\}"
+                r"function (?P<fn>[\w$]+)\(\)\{(?P<snap>[\w$]+)=Object\.freeze\("
+                r"\[\.\.\.(?P<arr>[\w$]+)\]\),(?P<em>[\w$]+)\.emit\(\)\}"
             ),
             _persist,
         ),
