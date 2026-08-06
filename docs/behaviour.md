@@ -649,6 +649,26 @@ are looked up by shape, and a test fails the build if any anchor spells a name
 name is not a name, it is a coincidence.** Never write one down, and never
 assume how it is spelled.
 
+2.1.223 then broke it again, differently, and the difference is worth being
+clear about because the first fix could not have prevented the second. That
+release changed the code itself, not just its names: it wrapped a value in a
+helper call, `insert(\`\n\`)` becoming `insert(esc(\`\n\`))`, and added a
+validity check in front of a function this patch rewrites.
+
+Nothing makes an anchor immune to the code actually changing. What made it
+worse than it needed to be was this patch rebuilding those functions from
+scratch, writing out parts it had merely matched. A replacement that spells out
+`{...cmd}` breaks when the original starts spelling it `{...normalise(cmd)}`,
+even though that detail is none of its business. So the rule beside the first
+one: **capture and carry through, never re-emit.** An edit should write only
+the part it is actually changing and copy everything around it verbatim from
+the match. Both of the 2.1.223 breakages were re-emitted code, and both are now
+carried through.
+
+None of this makes updates safe, and it is not meant to. It makes the patch
+break only when the thing it actually changes has moved, which is the point at
+which a human should look at it anyway.
+
 ### Safety properties
 
 - The change is applied to the copy of Claude Code on your machine. The original

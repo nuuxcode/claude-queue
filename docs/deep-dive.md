@@ -108,7 +108,7 @@ cd harness
 
 ## Install
 
-**Verified on Claude Code 2.1.220 and 2.1.221** (last checked 2026-08-04). On a release
+**Verified on Claude Code 2.1.220 through 2.1.223** (last checked 2026-08-06). On a release
 where the code has moved, it **refuses and writes nothing** rather than
 guessing; you keep working on stock until the patterns are updated.
 

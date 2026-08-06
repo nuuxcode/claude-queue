@@ -444,12 +444,12 @@ def _tab_key(m, js):
         'case"return":if({k}.ctrl){{'
         "if(!{w}.text&&globalThis.__qsRun?.())return;return}}"
         "return {ae}({k});"
-        "case\"enter\":return {w}.insert(`\n`);"
+        "case\"enter\":return {w}.insert({nl});"
         'case"tab":if({submit}&&{w}.text.trim()){{'
         "globalThis.__qsInvert={w}.text,{submit}({w}.text),{flag}=!0;return {w}}}"
         "return}}"
     ).format(k=m.group("k"), ae=m.group("ae"), w=m.group("w"),
-             submit=n["submit"], flag=n["flag"])
+             nl=m.group("nl"), submit=n["submit"], flag=n["flag"])
 
 def _no_abort(m):
     """A waiting message must never kill the turn it is waiting for.
@@ -618,17 +618,25 @@ def _enqueue_at_slot(m):
 
     Only the very next enqueue is affected, and the slot is cleared whether it
     was used or not, so a normal message typed later still goes to the back.
+
+    The guard in front and the spread inside the object are copied from the
+    match rather than written out here. 2.1.223 added a validity check before
+    the push and started spreading `{...normalise(cmd)}` instead of `{...cmd}`;
+    both were re-emitted here as literals, so the anchor stopped matching. What
+    this edit actually needs to change is where the object lands, so everything
+    else is carried through untouched.
     """
     return (
-        "function {fn}({a}){{"
+        "function {fn}({a}){{{guard}"
         "let __qi=globalThis.__qsAt;globalThis.__qsAt=void 0;"
-        'let __qo={{...{a},priority:{a}.priority??"next",'
+        'let __qo={{{spread},priority:{a}.priority??"next",'
         "timestamp:{a}.timestamp??new Date().toISOString()}};"
         'if(typeof __qi==="number"&&__qi>=0&&__qi<={arr}.length)'
         "{arr}.splice(__qi,0,__qo);else {arr}.push(__qo);"
         "{tail}"
     ).format(fn=m.group("fn"), a=m.group("a"), arr=m.group("arr"),
-             tail=m.group("tail"))
+             tail=m.group("tail"), guard=m.group("guard"),
+             spread=m.group("spread"))
 
 
 def _keep_marker(m):
@@ -1436,7 +1444,8 @@ press ctrl+enter while pointing at one to run it now.
             "tab sends with the opposite timing",
             re.compile(
                 r'case"return":if\((?P<k>[\w$]+)\.ctrl\)return;return (?P<ae>[\w$]+)\((?P=k)\);'
-                r'case"enter":return (?P<w>[\w$]+)\.insert\(`\n`\);case"tab":return\}'
+                r'case"enter":return (?P<w>[\w$]+)\.insert\((?P<nl>[^;]+?)\);'
+                r'case"tab":return\}'
             ),
             _tab_key,
         ),
@@ -1535,8 +1544,10 @@ press ctrl+enter while pointing at one to run it now.
         Edit(
             "put an edited message back in its slot",
             re.compile(
-                r"function (?P<fn>[\w$]+)\((?P<a>[\w$]+)\)\{(?P<arr>[\w$]+)\.push\("
-                r"\{\.\.\.(?P=a),priority:(?P=a)\.priority\?\?\"next\","
+                r"function (?P<fn>[\w$]+)\((?P<a>[\w$]+)\)\{"
+                r"(?P<guard>(?:if\([^{}]*?\)return;)?)"
+                r"(?P<arr>[\w$]+)\.push\("
+                r"\{(?P<spread>\.\.\.[^,]+),priority:(?P=a)\.priority\?\?\"next\","
                 r"timestamp:(?P=a)\.timestamp\?\?new Date\(\)\.toISOString\(\)\}\),"
                 r"(?P<tail>[^}]*\})"
             ),

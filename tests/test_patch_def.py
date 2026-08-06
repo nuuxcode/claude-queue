@@ -66,8 +66,13 @@ def edit_roundtrip(queue):
     remember = patch_def.Edit(
         "test slot translation", None, patch_def._remember_slot,
     ).replacement(remember_match, queue_shapes)
+    # `guard` and `spread` are carried through from the match rather than
+    # written by the builder, because 2.1.223 added a validity check before the
+    # push and changed the spread to `{...normalise(cmd)}`. The empty guard and
+    # the plain spread here are the pre-2.1.223 shape, which must still work.
     enqueue = patch_def._enqueue_at_slot(Groups(
         "", fn="enqueue", a="a", arr="arr", tail="notify()}",
+        guard="", spread="...a",
     ))
     script = "\n".join([
         f"let arr={json.dumps(queue)};",
