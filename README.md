@@ -61,7 +61,7 @@ right when you are ready for it to mean something.
 Nothing here fights the tool: Claude Code already has a queue inside it. This
 patch gives you the controls.
 
-## New in 2.2.0
+## New in 2.2.x
 
 **If you are already running 2.1.0, update.** Two of these are bugs you have
 today, and one of them stops the patch working the moment you update Claude
@@ -69,7 +69,7 @@ Code itself.
 
 | | |
 |---|---|
-| **Works on Claude Code 2.1.221** | 2.1.0 refuses to apply on it and leaves you unpatched. Nothing about the queue changed in that release, it just renamed things internally, and the patch was reading those names too literally |
+| **Works on Claude Code 2.1.221 to 2.1.223** | 2.1.0 refuses to apply on any of them and leaves you unpatched. Nothing about the queue changed in those releases; they renamed things and moved a little code around, and this patch was reading both too literally |
 | **A queue belongs to one session** | 2.1.0 handed a new terminal the previous one's saved queue, then saved it forward under its own name. A few terminals in, one file held everything you had ever queued in that project |
 | **Long pasted markers work** | `q`, `s` and `p` were ignored on a long pasted or dictated message, so it ran instead of queuing |
 | **`p` parks a message** | new: it sits in the list and never runs until you say so |

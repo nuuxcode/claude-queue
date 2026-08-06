@@ -1323,7 +1323,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.2.0",
+    version="2.2.1",
     marker="__qsp",
     usage="""
 While Claude is working:
