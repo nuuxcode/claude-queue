@@ -69,15 +69,17 @@ gone. Compacting earlier is better, but doing it on a timer is worse than doing
 nothing, because it lands in the middle of an edit.
 
 ```bash
-export CLAUDE_QUEUE_COMPACT_AT=40
+export CLAUDE_QUEUE_COMPACT_AT=50
 ```
 
-At 40% it steers one message into the running turn:
+At that percentage it steers one message into the running turn:
 
 ```
-[claude-queue] Context is at 40% and this session is about to be checked in.
-Finish what you are doing and stop at a clean point. Do not start anything new.
-Queued behind you, in order: /precompact, then /compact, then continue.
+[claude-queue] Context is at 50%. Pause here. Finish only the small step you
+are on at this moment, then stop and wait. Do NOT finish the wider task, and do
+NOT start the next step. This is a pause, not the end of the work: /precompact,
+then /compact, then continue are already queued behind you, and you will pick
+the work back up right where you stopped. Say I AM READY.
 
   [waits] /precompact
   [waits] /compact

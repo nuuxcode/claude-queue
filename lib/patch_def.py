@@ -877,7 +877,14 @@ def _auto_compact(m):
     finished state the model happened to be in.
 
     So this asks first. At the threshold it steers one message into the running
-    turn saying "stop at a clean point", and queues the checkpoint behind it.
+    turn asking the model to stop, and queues the checkpoint behind it.
+
+    The wording of that message matters more than it looks. "Finish what you
+    are doing" reads to a model as "finish the task", which is the opposite of
+    the intent: it would push on through the remaining work at exactly the
+    moment the context is running out. It now says to finish only the current
+    small step, not to start the next one, and that this is a pause rather than
+    the end, because a model told to stop will otherwise try to wrap up.
     The steer reaches the model at the next tool boundary. The queued commands
     cannot run until the turn ends, because that is what waiting means here. So
     the model chooses the moment it hands over, and the checkpoint is written
@@ -917,11 +924,12 @@ def _auto_compact(m):
         "globalThis.__qsCompactArmed=!1;"
         'let __qm=(__qv,__qr)=>{enq}({{agentId:{aid}(),mode:"prompt",'
         "value:__qv,priority:__qr}});"
-        "__qm(`[claude-queue] Context is at ${{__qp}}% and this session is "
-        "about to be checked in. Finish what you are doing and stop at a clean "
-        "point. Do not start anything new. Queued behind you, in order: "
-        "/precompact, then /compact, then continue. Say I AM READY once you "
-        'have stopped.`,"next");'
+        "__qm(`[claude-queue] Context is at ${{__qp}}%. Pause here. Finish "
+        "only the small step you are on at this moment, then stop and wait. "
+        "Do NOT finish the wider task, and do NOT start the next step. This "
+        "is a pause, not the end of the work: /precompact, then /compact, "
+        "then continue are already queued behind you, and you will pick the "
+        'work back up right where you stopped. Say I AM READY.`,"next");'
         '__qm("/precompact","later");'
         '__qm("/compact","later");'
         '__qm("continue","later")}};'
@@ -1415,7 +1423,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.3.0",
+    version="2.3.1",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -1468,7 +1476,7 @@ press ctrl+enter while pointing at one to run it now.
     export CLAUDE_QUEUE_ADOPT=on         let a fresh session take the newest
                                          saved queue in this project
     export CLAUDE_QUEUE_MODEL_NOW=off    make /model wait for the turn again
-    export CLAUDE_QUEUE_COMPACT_AT=40    check the session in at 40% context
+    export CLAUDE_QUEUE_COMPACT_AT=50    check the session in at 50% context
 
 CLAUDE_QUEUE_COMPACT_AT is off unless you set it. At that percentage it steers
 one message into the running turn asking Claude to stop at a clean point, then
