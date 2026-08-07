@@ -629,9 +629,9 @@ def _edit_one(m, js):
     """
     n = _queue_names(js)
     return (
-        "let {w}={popat}({getq}().filter({editable}).length-1,{t},{c});"
+        "let {w}={popat}({getq}().filter({editable}).length-1,{args});"
         "if(!{w})return!1;{rest}\"input_queue_pop_to_edit\""
-    ).format(w=m.group("w"), t=m.group("t"), c=m.group("c"),
+    ).format(w=m.group("w"), args=m.group("args"),
              rest=m.group("rest"), **n)
 
 
@@ -653,9 +653,9 @@ def _remember_slot(m, js):
         "if({i}===null)return!1;"
         "let __qsa={getq}(),__qso=__qsa.filter({editable})[{i}];"
         "globalThis.__qsAt=__qsa.indexOf(__qso);"
-        "let {r}={pop}({i},{t},{c});"
+        "let {r}={pop}({i},{args});"
     ).format(i=m.group("i"), ht=m.group("ht"), r=m.group("r"),
-             pop=m.group("pop"), t=m.group("t"), c=m.group("c"), **n)
+             pop=m.group("pop"), args=m.group("args"), **n)
 
 
 def _enqueue_at_slot(m):
@@ -697,19 +697,34 @@ def _keep_marker(m):
     marker that reproduces it. Send it unchanged and the timing is unchanged.
     Delete the marker and it becomes an ordinary queued message, which is now
     a choice you can see rather than one made for you.
+
+    The first version of this rewrote the line that pulls the text out of the
+    stored message, because that was the obvious place to put a prefix in
+    front of it. 2.1.224 replaced that line, one call became a helper and a
+    destructure, and the anchor found nothing.
+
+    So it does not touch the extraction at all now. Whatever produces the text
+    is copied out of the match and pasted back unread, and the marker goes on
+    at the next step, where the text and the editor's current contents are
+    joined. That join has been the same shape across every release seen so
+    far, and unlike the extraction it is something this edit has a real reason
+    to be looking at.
     """
     return (
-        "function {fn}({i},{cur},{off}){{"
+        "function {fn}({i},{params}){{"
         "let {c}={arr}.filter({ed})[{i}];if(!{c})return;"
         'let __qd=process.env.CLAUDE_QUEUE_DEFAULT==="steer"?"next":"later";'
         'let __qm={c}.priority&&{c}.priority!==__qd'
         '?({c}.priority==="later"?"q ":'
         '{c}.priority==="{paused}"?"p ":'
         '{c}.priority==="{after}"?"x ":"s "):"";'
-        "let {v}=__qm+{raw}({c}.value),"
-    ).format(fn=m.group("fn"), i=m.group("i"), cur=m.group("cur"),
-             off=m.group("off"), c=m.group("c"), arr=m.group("arr"),
-             ed=m.group("ed"), v=m.group("v"), raw=m.group("raw"),
+        "{mid}"
+        "{out}=[__qm+{txt},{cur}].filter(Boolean).join(`\\n`),"
+        "{off}=(__qm+{txt}).length+1+{coff},"
+    ).format(fn=m.group("fn"), i=m.group("i"), params=m.group("params"),
+             c=m.group("c"), arr=m.group("arr"), ed=m.group("ed"),
+             mid=m.group("mid"), out=m.group("out"), txt=m.group("txt"),
+             cur=m.group("cur"), off=m.group("off"), coff=m.group("coff"),
              paused=PAUSED, after=AFTER)
 
 
@@ -1593,7 +1608,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.4.0",
+    version="2.4.1",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -1683,7 +1698,14 @@ really is under the threshold again.
         Edit(
             "resolve the marker",
             re.compile(
-                r"let (?P<cmd>[\w$]+)=\{agentId:[\w$]+\(\),value:(?P<val>[\w$]+),"
+                # The command object is not always the first thing the `let`
+                # declares. 2.1.224 put a `pastedContents` test in front of it,
+                # so the anchor takes any declarators before it and carries
+                # them through. Matching from `let` is what keeps the insertion
+                # point a statement boundary: the resolver's code goes in
+                # front of the whole declaration, never inside one.
+                r"let (?P<lead>[\w$]+=[^;]{0,300}?,)?"
+                r"(?P<cmd>[\w$]+)=\{agentId:[\w$]+\(\),value:(?P<val>[\w$]+),"
                 r'preExpansionValue:[\w$]+\.[\w$]+==="suggestion_accepted"\?void 0:(?P<raw>[\w$]+),'
                 r"mode:(?P<mode>[\w$]+),"
             ),
@@ -1795,7 +1817,10 @@ really is under the threshold again.
         Edit(
             "bring back one queued message, not all of them",
             re.compile(
-                r"let (?P<w>[\w$]+)=[\w$]+\((?P<t>[\w$]+),(?P<c>[\w$]+)\);"
+                # The argument list is captured whole, never counted. 2.1.224
+                # gave both pop functions one more argument and an anchor
+                # spelling two of them found nothing.
+                r"let (?P<w>[\w$]+)=[\w$]+\((?P<args>[^()]*)\);"
                 r"if\(!(?P=w)\)return!1;(?P<rest>.{0,400}?)"
                 r'"input_queue_pop_to_edit"'
             ),
@@ -1830,7 +1855,7 @@ really is under the threshold again.
             re.compile(
                 r"let (?P<i>[\w$]+)=(?P<ht>[\w$]+)\.getState\(\)\.queueEditIndex;"
                 r"if\((?P=i)===null\)return!1;"
-                r"let (?P<r>[\w$]+)=(?P<pop>[\w$]+)\((?P=i),(?P<t>[\w$]+),(?P<c>[\w$]+)\);"
+                r"let (?P<r>[\w$]+)=(?P<pop>[\w$]+)\((?P=i),(?P<args>[^()]*)\);"
             ),
             _remember_slot,
         ),
@@ -1936,10 +1961,16 @@ really is under the threshold again.
         Edit(
             "give a message its marker back when you edit it",
             re.compile(
-                r"function (?P<fn>[\w$]+)\((?P<i>[\w$]+),(?P<cur>[\w$]+),(?P<off>[\w$]+)\)\{"
+                r"function (?P<fn>[\w$]+)\((?P<i>[\w$]+),(?P<params>[^()]*)\)\{"
                 r"let (?P<c>[\w$]+)=(?P<arr>[\w$]+)\.filter\((?P<ed>[\w$]+)\)\[(?P=i)\];"
                 r"if\(!(?P=c)\)return;"
-                r"let (?P<v>[\w$]+)=(?P<raw>[\w$]+)\((?P=c)\.value\),"
+                # Whatever pulls the text out of the message, carried through
+                # unread. 2.1.224 replaced it and an anchor that spelled it
+                # found nothing.
+                r"(?P<mid>.{0,300}?)"
+                r"(?P<out>[\w$]+)=\[(?P<txt>[\w$]+),(?P<cur>[\w$]+)\]"
+                r"\.filter\(Boolean\)\.join\(`\n`\),"
+                r"(?P<off>[\w$]+)=(?P=txt)\.length\+1\+(?P<coff>[\w$]+),"
             ),
             _keep_marker,
         ),

@@ -60,7 +60,7 @@ def edit_roundtrip(queue):
     remember_match = Groups(
         "let i=state.getState().queueEditIndex;"
         "if(i===null)return!1;let r=pop(i,t,c);",
-        i="i", ht="state", r="r", pop="pop", t="t", c="c",
+        i="i", ht="state", r="r", pop="pop", args="t,c",
     )
     queue_shapes = QUEUE_SHAPES
     remember = patch_def.Edit(
@@ -684,6 +684,60 @@ class NameLookupTests(unittest.TestCase):
             patch_def._enqueue_name("var a=1,Pv=Ly.enqueue,b=2;"), "Pv")
         self.assertEqual(
             patch_def._enqueue_name("var s$t=q$.enqueue;"), "s$t")
+
+    def test_no_anchor_pins_the_number_of_arguments_a_call_takes(self):
+        """2.1.224 gave three helpers one more argument each and four anchors
+        found nothing, with none of the code they describe having changed.
+
+        An argument list is not a shape. Anchors that reach across one capture
+        the whole list and paste it back, so an added argument travels through
+        instead of stopping the patch. These are the four that were caught
+        counting, checked at the arity they were written for and at one more.
+        """
+        cases = [
+            ("bring back one queued message, not all of them",
+             'let w=pop(a,b);if(!w)return!1;x"input_queue_pop_to_edit"',
+             'let w=pop(a,b,c,d);if(!w)return!1;x"input_queue_pop_to_edit"'),
+            ("remember which slot a message came from",
+             "let i=ht.getState().queueEditIndex;if(i===null)return!1;"
+             "let r=pop(i,a,b);",
+             "let i=ht.getState().queueEditIndex;if(i===null)return!1;"
+             "let r=pop(i,a,b,c={});"),
+        ]
+        by_name = {e.name: e for e in patch_def.PATCH.edits}
+        for name, before, after in cases:
+            for js in (before, after):
+                with self.subTest(edit=name, args=js.count(",")):
+                    self.assertIsNotNone(by_name[name].anchor.search(js))
+
+    def test_the_marker_anchor_survives_a_rewritten_text_extraction(self):
+        """It used to spell the line that pulls the text out of the message.
+        2.1.224 replaced one call with a helper and a destructure."""
+        edit = {e.name: e for e in patch_def.PATCH.edits}[
+            "give a message its marker back when you edit it"]
+        old = ("function f(i,cur,off){let c=arr.filter(ed)[i];if(!c)return;"
+               "let v=raw(c.value),o=[v,cur].filter(Boolean).join(`\n`),"
+               "n=v.length+1+off,")
+        new = ("function f(i,cur,off,opts={}){let c=arr.filter(ed)[i];"
+               "if(!c)return;let[h]=pull([c],cur,opts),{text:v,entries:en}=h,"
+               "o=[v,cur].filter(Boolean).join(`\n`),n=v.length+1+off,")
+        for js in (old, new):
+            with self.subTest(js=js[:40]):
+                self.assertIsNotNone(edit.anchor.search(js))
+
+    def test_the_resolver_anchor_survives_an_extra_declarator(self):
+        """2.1.224 declared a pastedContents test in the same `let`."""
+        edit = {e.name: e for e in patch_def.PATCH.edits}["resolve the marker"]
+        tail = ('preExpansionValue:e.i==="suggestion_accepted"?void 0:r,'
+                "mode:m,")
+        for js in ("let c={agentId:A(),value:v," + tail,
+                   "let w=U&&e.i!==\"x\"&&f(r).some((y)=>1),"
+                   "c={agentId:A(),value:v," + tail):
+            with self.subTest(js=js[:30]):
+                match = edit.anchor.search(js)
+                self.assertIsNotNone(match)
+                self.assertTrue(match.group(0).startswith("let "),
+                                "the insertion point must stay a statement")
 
     def test_enqueue_lookup_refuses_when_it_is_not_unique(self):
         for js in ("nothing here at all", "a=x.enqueue;b=y.enqueue;"):
