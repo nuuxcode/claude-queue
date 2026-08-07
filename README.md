@@ -61,6 +61,47 @@ right when you are ready for it to mean something.
 Nothing here fights the tool: Claude Code already has a queue inside it. This
 patch gives you the controls.
 
+## Checking in before the context runs out
+
+Long sessions end the same way: the context fills, Claude Code compacts by
+itself at the last moment, and the useful part of the conversation is already
+gone. Compacting earlier is better, but doing it on a timer is worse than doing
+nothing, because it lands in the middle of an edit.
+
+```bash
+export CLAUDE_QUEUE_COMPACT_AT=40
+```
+
+At 40% it steers one message into the running turn:
+
+```
+[claude-queue] Context is at 40% and this session is about to be checked in.
+Finish what you are doing and stop at a clean point. Do not start anything new.
+Queued behind you, in order: /precompact, then /compact, then continue.
+
+  [waits] /precompact
+  [waits] /compact
+  [waits] continue
+```
+
+**Nothing is interrupted.** Queued messages cannot run until the turn ends, so
+Claude finishes its thought first, and the three then run one turn each, in
+order. The checkpoint is written by a model that has just decided it is at a
+good stopping point, which is a better summary than one taken at a random
+instant.
+
+Nothing reads what Claude says back, so it cannot get stuck waiting for a magic
+word: the queue drains when the turn ends, and a turn always ends. It re-arms
+once usage drops, so a session left running overnight checks itself in as often
+as it needs to.
+
+Pick a number comfortably above where a fresh compaction lands, usually 10 to
+20 percent. Below that floor it will check in again right after every
+compaction, because usage really is under the threshold again.
+
+`/precompact` is not built in. It is whatever you have bound that name to, so
+what the checkpoint actually does is yours to define.
+
 ## New in 2.2.x
 
 **If you are already running 2.1.0, update.** Two of these are bugs you have

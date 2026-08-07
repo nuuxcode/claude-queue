@@ -837,6 +837,98 @@ def _escape_keeps_paused(m):
              c=m.group("c"), l9=m.group("l9"), paused=PAUSED)
 
 
+def _ctx_watch(m):
+    """Report the context percentage, from the one place that always runs.
+
+    Claude Code works out how full the context is in more than one place, and
+    most of them are the wrong place to read it. The status line's calculation
+    only runs when a status line is configured, which is a setting, so a patch
+    that depended on it would work on one machine and silently do nothing on
+    the next. That was the first attempt here, and it did nothing at all
+    because the test session had no status line.
+
+    This one is the footer's own calculation. It receives the token count, the
+    model and the window, and it is called whenever the token count changes,
+    which is exactly the moment worth checking. It also runs whether or not
+    anything ends up drawn on screen.
+
+    It only reports. The decision lives beside the queue, because that is where
+    the ability to do anything about it lives.
+    """
+    return (
+        "function {fn}({e},{t},{r}){{"
+        "let {n}={vv}({t},{r}),{o}={n}.enabled?{r}:void 0;"
+        "let __qw={jee}({t},{o});"
+        "if(__qw>0)globalThis.__qsCtx?.("
+        "Math.min(100,Math.max(0,Math.round({e}/__qw*100))));"
+        "return {q}({e},__qw,{n},{z}({t}))}}"
+    ).format(fn=m.group("fn"), e=m.group("e"), t=m.group("t"), r=m.group("r"),
+             n=m.group("n"), vv=m.group("vv"), o=m.group("o"),
+             jee=m.group("jee"), q=m.group("q"), z=m.group("z"))
+
+
+def _auto_compact(m):
+    """Check the session in before the context runs out, without interrupting.
+
+    Claude Code compacts by itself when the window is nearly full, and by then
+    the useful part of the conversation is already gone. Compacting earlier is
+    better, but doing it on a timer is worse than doing nothing: it lands in
+    the middle of an edit, and the summary gets written from whatever half
+    finished state the model happened to be in.
+
+    So this asks first. At the threshold it steers one message into the running
+    turn saying "stop at a clean point", and queues the checkpoint behind it.
+    The steer reaches the model at the next tool boundary. The queued commands
+    cannot run until the turn ends, because that is what waiting means here. So
+    the model chooses the moment it hands over, and the checkpoint is written
+    by a model that has just decided it is at a good stopping point.
+
+    Three queued commands, in order, one turn each:
+
+        /precompact   whatever your checkpoint routine is
+        /compact      the compaction itself
+        continue      pick the work back up
+
+    Nothing here reads what the model says. It cannot hang waiting for a magic
+    word, because it is not listening for one: the queue drains when the turn
+    ends, and a turn always ends.
+
+    Off unless CLAUDE_QUEUE_COMPACT_AT is set to a percentage. It re-arms
+    whenever usage falls back under the threshold, which is what compacting
+    does, so a session left running overnight checks itself in as often as it
+    needs to rather than once.
+
+    A reading of zero is ignored, and that is not a tidiness rule. While a
+    compaction is running the token count passes through zero on its way down,
+    which re-armed this instantly, and the moment the new summary landed it
+    fired again. Driven at a 5% threshold it checked in twice in a row for no
+    reason. Zero means "between conversations", never "there is plenty of
+    room".
+    """
+    return (
+        '{reg}(({e})=>{enq}({{agentId:{aid}(),mode:"prompt",'
+        "value:`/${{{e}}}`}}));"
+        "globalThis.__qsCtx=function(__qp){{"
+        'let __qt=parseFloat(process.env.CLAUDE_QUEUE_COMPACT_AT||"");'
+        'if(!(__qt>0&&__qt<100)||typeof __qp!=="number")return;'
+        "if(__qp<=0)return;"
+        "if(__qp<__qt){{globalThis.__qsCompactArmed=!0;return}}"
+        "if(globalThis.__qsCompactArmed===!1)return;"
+        "globalThis.__qsCompactArmed=!1;"
+        'let __qm=(__qv,__qr)=>{enq}({{agentId:{aid}(),mode:"prompt",'
+        "value:__qv,priority:__qr}});"
+        "__qm(`[claude-queue] Context is at ${{__qp}}% and this session is "
+        "about to be checked in. Finish what you are doing and stop at a clean "
+        "point. Do not start anything new. Queued behind you, in order: "
+        "/precompact, then /compact, then continue. Say I AM READY once you "
+        'have stopped.`,"next");'
+        '__qm("/precompact","later");'
+        '__qm("/compact","later");'
+        '__qm("continue","later")}};'
+    ).format(reg=m.group("reg"), e=m.group("e"), enq=m.group("enq"),
+             aid=m.group("aid"))
+
+
 def _work_only(m):
     """A paused message is not work, so it must not make the session look busy.
 
@@ -1323,7 +1415,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.2.1",
+    version="2.3.0",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -1376,6 +1468,17 @@ press ctrl+enter while pointing at one to run it now.
     export CLAUDE_QUEUE_ADOPT=on         let a fresh session take the newest
                                          saved queue in this project
     export CLAUDE_QUEUE_MODEL_NOW=off    make /model wait for the turn again
+    export CLAUDE_QUEUE_COMPACT_AT=40    check the session in at 40% context
+
+CLAUDE_QUEUE_COMPACT_AT is off unless you set it. At that percentage it steers
+one message into the running turn asking Claude to stop at a clean point, then
+queues /precompact, /compact and continue behind it. Nothing is interrupted:
+queued messages cannot run until the turn ends, so Claude chooses the moment.
+
+Use a number comfortably above where a fresh compaction lands, which is
+usually 10 to 20 percent. 40 is a good default. Setting it below that floor
+makes it check in again immediately after every compaction, because usage
+really is under the threshold again.
 """,
     edits=[
         Edit(
@@ -1696,6 +1799,27 @@ press ctrl+enter while pointing at one to run it now.
                 r'function (?P<o>[\w$]+)\(\)\{return (?P=arr)\.length>0\}'
             ),
             _work_only,
+        ),
+        Edit(
+            "report the context percentage",
+            re.compile(
+                r'function (?P<fn>[\w$]+)\((?P<e>[\w$]+),(?P<t>[\w$]+),'
+                r'(?P<r>[\w$]+)\)\{'
+                r'let (?P<n>[\w$]+)=(?P<vv>[\w$]+)\((?P=t),(?P=r)\),'
+                r'(?P<o>[\w$]+)=(?P=n)\.enabled\?(?P=r):void 0;'
+                r'return (?P<q>[\w$]+)\((?P=e),(?P<jee>[\w$]+)\((?P=t),(?P=o)\),'
+                r'(?P=n),(?P<z>[\w$]+)\((?P=t)\)\)\}'
+            ),
+            _ctx_watch,
+        ),
+        Edit(
+            "check the session in before the context runs out",
+            re.compile(
+                r'(?P<reg>[\w$]+)\(\((?P<e>[\w$]+)\)=>(?P<enq>[\w$]+)\('
+                r'\{agentId:(?P<aid>[\w$]+)\(\),mode:"prompt",'
+                r'value:`/\$\{(?P=e)\}`\}\)\)'
+            ),
+            _auto_compact,
         ),
         Edit(
             "escape leaves parked messages alone",
