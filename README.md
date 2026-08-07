@@ -36,16 +36,18 @@ An optional label at the start of the message tells Claude Queue what you mean:
 run the migration     no label: waits for the current job to finish
 s check the logs      start with "s ": jumps in at the next safe moment
 q run the migration   start with "q ": waits, said out loud
+x run the full suite  start with "x ": waits for the background work too
 p rewrite the docs    start with "p ": parked, never runs until you say so
 ```
 
 These are message prefixes, not live keyboard shortcuts. You write and submit
 the whole message. A normal message waits by default. Start the submitted
 message with `s ` only when you want it to steer the running turn, `q ` when
-you want to say "wait" explicitly, or `p ` when you want to park the thought
-without running it at all. Pressing `s`, `q` or `p` elsewhere does nothing to
-the running turn, and the prefix is removed before Claude sees the message.
-The screen labels the result as `[waits]`, `[jumps in]` or `[paused]`.
+you want to say "wait" explicitly, `x ` when the background work has to finish
+first, or `p ` when you want to park the thought without running it at all.
+Pressing `s`, `q`, `x` or `p` elsewhere does nothing to the running turn, and
+the prefix is removed before Claude sees the message. The screen labels the
+result as `[waits]`, `[jumps in]`, `[waits for 1 shell]` or `[paused]`.
 
 The waiting ones sit in a list you can see. Reorder them, edit one without
 touching the rest, delete one you changed your mind about, or press left and
@@ -60,6 +62,38 @@ right when you are ready for it to mean something.
 
 Nothing here fights the tool: Claude Code already has a queue inside it. This
 patch gives you the controls.
+
+## The turn ending is not the work ending
+
+Claude hands the prompt back and the session looks finished. It often is not.
+A background agent is still thinking, a shell you sent to the background is
+still running, a monitor is still watching. The footer says so, in small grey
+letters: `1 shell still running`, `Waiting for 1 background agent to finish`.
+
+Your next message does not know that. It waited for the turn, the turn ended,
+so it runs, straight into work that is still going. Then the background task
+finishes in the middle of it and hands Claude a result it was not expecting.
+
+`x ` is the message that waits for all of it:
+
+```
+x run the full test suite
+```
+
+```
+  [waits for 2 agents, 1 shell] run the full test suite
+```
+
+The row says what it is waiting for and updates as the count drops, so an `x`
+message that has not gone yet is never a mystery. It goes on its own the
+moment the last one finishes. Nothing polls, nothing is interrupted, and if
+there is no background work it behaves exactly like an ordinary waiting
+message.
+
+It counts what Claude Code itself counts: background agents, backgrounded
+shells, monitors, workflows and teammates. It does not count a cloud session
+or a subagent the current turn is already waiting for, because neither is
+something the turn ending leaves behind.
 
 ## Checking in before the context runs out
 
@@ -104,6 +138,14 @@ compaction, because usage really is under the threshold again.
 `/precompact` is not built in. It is whatever you have bound that name to, so
 what the checkpoint actually does is yours to define.
 
+## New in 2.4.0
+
+| | |
+|---|---|
+| **`x` waits for the background work** | new: a message that stays queued while a background agent, a backgrounded shell, a monitor or a workflow is still going, and runs the moment the last one finishes |
+| **The row says what it is waiting for** | `[waits for 2 agents, 1 shell]`, updating as the count drops |
+| **Left and right cycle four modes** | waits, jumps in, waits for the background, parked |
+
 ## New in 2.2.x
 
 **If you are already running 2.1.0, update.** Two of these are bugs you have
@@ -142,13 +184,14 @@ reproduction, the full recording harness, and the rest of the queue controls.
 | `fix the tests` | waits for the current job to finish |
 | `s fix the tests` | jumps in while the job keeps running |
 | `q fix the tests` | waits, labelled on screen |
+| `x fix the tests` | waits for the turn AND for every background task to finish |
 | `p fix the tests` | parked: sits in the list and never runs until you change it |
 | a long pasted `p ...` | works too. Pasted code like `q = deque()` still arrives as plain text |
 | **tab** instead of enter | the opposite of your default, no letter needed |
 | up / down | move through the waiting list |
 | enter on a waiting message | pull it back to edit alone, send returns it to its slot |
 | shift + up / down | move it earlier or later |
-| left / right | change what it will do: waits, jumps in, paused, and round again |
+| left / right | change what it will do: waits, jumps in, waits for the background, paused, and round again |
 | ctrl + enter | let go of the list and run what is runnable, now |
 | `/model`, `/status`, `/usage` | open at once, even mid-turn. They change nothing Claude is doing, so they do not wait |
 | delete | remove it, only while the editor is empty |

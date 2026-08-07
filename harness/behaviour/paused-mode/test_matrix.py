@@ -137,17 +137,20 @@ try:
     # cycle GAMMA while the turn is still running
     lab.key("up")
     lab._pump(0.8)
+    # Four modes since 2.4.0: waits, jumps in, waits for the background,
+    # paused. The cycle is one loop, so four presses visit all four.
     seen = []
-    for _ in range(3):
+    for _ in range(4):
         lab.write(RIGHT)
         lab._pump(0.8)
-        seen.append(next((t for t in ("[paused]", "[waits]", "[jumps in]")
+        seen.append(next((t for t in ("[paused]", "[waits for", "[waits]",
+                                      "[jumps in]")
                           for r in qrows(lab) if t in r and "GAMMA" in r), None))
     check("B4. cycling works while busy too",
-          len(set(seen)) == 3 and all(seen), str(seen))
+          len(set(seen)) == 4 and all(seen), str(seen))
 
     # put it back to paused, then reorder and delete against it
-    for _ in range(3):
+    for _ in range(4):
         if any("[paused]" in r and "GAMMA" in r for r in qrows(lab)):
             break
         lab.write(RIGHT)

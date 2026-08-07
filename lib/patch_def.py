@@ -4,6 +4,7 @@ claude-queue: type your next instruction without derailing the running one.
     <text>        waits until the current turn finishes  (the default)
     s <text>      jumps in at the next tool boundary     (stock behaviour)
     q <text>      waits, said explicitly
+    x <text>      waits for the turn AND for the background work to finish
     p <text>      parked: sits in the queue and never runs until you say so
 
     CLAUDE_QUEUE_DEFAULT=steer    puts the stock behaviour back as the default
@@ -39,6 +40,14 @@ A paused message is the one that never surprises you. It is queued, drawn and
 editable like any other, and no path that picks work will take it, so it waits
 there through as many turns as you like. Point at it and press left or right to
 give it a mode that runs.
+
+A message marked "x" waits for more than the turn. The end of a turn is not the
+end of the work: a background agent, a shell left running, a monitor or a
+workflow all keep going after Claude hands the prompt back, and a waiting
+message runs straight into them. An "x" message stays in the queue while any of
+that is still alive, and goes the moment the last one finishes. Its row names
+what it is waiting for, so [waits for 1 shell] becomes [waits for background]
+and then runs.
 
 Waiting messages survive a restart. Every change to the queue is written to
 this project's .claude directory, in a file named for the session, and the next
@@ -103,15 +112,19 @@ from ccpatch import Edit, Patch, PatchError, main  # noqa: E402
 # silently eating the first word of "Queue depth is high" is worse than losing
 # two redundant aliases. Pasted multi-job batches use the colon-only form so
 # ordinary pasted code such as ``q = deque()`` stays literal.
-MARKER = r"/^(q|s|p)(?::|\s)\s*/i"
+MARKER = r"/^(q|s|p|x)(?::|\s)\s*/i"
 # On a paste the bar is higher, because pasted code can begin with a letter
 # that looks like a marker. The colon form always counts. The space form counts
 # only when a letter or digit follows it, which is what separates a sentence,
 # "p Okay, so we did pass one", from an assignment, "q = deque()".
-PASTE_MARKER = r"/^(q|s|p)(?::\s*|\s+(?=[A-Za-z0-9]))/i"
+PASTE_MARKER = r"/^(q|s|p|x)(?::\s*|\s+(?=[A-Za-z0-9]))/i"
 
-# q waits, s jumps in, p is parked and never runs until you change it.
-PRI_OF_MARKER = '(__qa)=>__qa==="q"?"later":__qa==="p"?"paused":"next"'
+# q waits, s jumps in, x waits for the background too, p is parked and never
+# runs until you change it.
+PRI_OF_MARKER = (
+    '(__qa)=>__qa==="q"?"later":__qa==="p"?"paused"'
+    ':__qa==="x"?"after":"next"'
+)
 
 # "paused" is deliberately not a key in Claude Code's own priority table
 # {now:0,next:1,later:2}. Every place that chooses a command to run compares
@@ -121,6 +134,15 @@ PRI_OF_MARKER = '(__qa)=>__qa==="q"?"later":__qa==="p"?"paused":"next"'
 # without a single new gate in the running path. It stays in the queue, drawn
 # and editable, until you give it a priority that means something.
 PAUSED = "paused"
+
+# "after" is the same trick with a hinge on it. It is not a key in that table
+# either, so all three selectors skip it exactly the way they skip "paused" and
+# no new gate goes into the running path. The difference is that this one is a
+# getter: it reads as undefined while background work is alive, and as the same
+# number as "later" the moment the last background task finishes. So an "after"
+# message is invisible to the drain until the background clears, and then it is
+# an ordinary waiting message.
+AFTER = "after"
 
 # The default when you type no marker. "later" means wait for the end of the
 # turn. Set CLAUDE_QUEUE_DEFAULT=steer to get stock behaviour back.
@@ -290,7 +312,9 @@ def _no_turn_for_paused(m):
         "__ql.forEach((__qb)=>{{let __qc=__qf(__qb);"
         "if(__qc)__qx.push(__qc[1][0].toLowerCase());"
         "else if(!__qx.length&&__qb.trim())__qx.push(\"*\")}});"
-        "return __qx.length>0&&__qx.every((__qb)=>__qb===\"p\")}})"
+        "let __qbg=!!globalThis.__qsBusy?.();"
+        "return __qx.length>0&&__qx.every((__qb)=>__qb===\"p\""
+        "||__qb===\"x\"&&__qbg)}})"
         "({yt})||({oh}({yt}),{oo}())"
     ).format(wf=m.group("wf"), js=m.group("js"), dr=m.group("dr"),
              oue=m.group("oue"), jn=m.group("jn"), ih=m.group("ih"),
@@ -318,12 +342,15 @@ def _queue_when_paused(m):
     split below picks the first runnable line to run.
     """
     return (
+        "let __qsbg=!!globalThis.__qsBusy?.();"
         'if({r}.isActive||{n}||__qsp==="{paused}"'
-        '||__qsx&&__qsx.every((__qy)=>__qy.p==="{paused}")){{'
+        '||__qsp==="{after}"&&__qsbg'
+        '||__qsx&&__qsx.every((__qy)=>__qy.p==="{paused}"'
+        '||__qy.p==="{after}"&&__qsbg)){{'
         'if({o}!=="prompt"&&{o}!=="bash"){{'
         '{pe}("prompt_queued","mode_not_queueable");return}}'
     ).format(r=m.group("r"), n=m.group("n"), o=m.group("o"), pe=m.group("pe"),
-             paused=PAUSED)
+             paused=PAUSED, after=AFTER)
 
 
 def _remember_paste(m):
@@ -376,7 +403,8 @@ def _idle_split(m, js):
     """
     return (
         '{be}("prompt_submit"),'
-        '__qsf=__qsx?__qsx.find((__qy)=>__qy.p!=="{paused}")??__qsx[0]:null,'
+        '__qsf=__qsx?__qsx.find((__qy)=>__qy.p!=="{paused}"'
+        '&&!(__qy.p==="{after}"&&globalThis.__qsBusy?.()))??__qsx[0]:null,'
         "__qsx&&__qsx.forEach((__qy)=>{{if(__qy!==__qsf)"
         "{enq}({{...{j},value:__qy.v,preExpansionValue:void 0,"
         "priority:__qy.p}})}}),"
@@ -384,7 +412,7 @@ def _idle_split(m, js):
         "__qsf?{{...{j},value:__qsf.v,preExpansionValue:void 0,"
         "...__qsf.p?{{priority:__qsf.p}}:{{}}}}:{j}],"
     ).format(fn=m.group("fn"), a=m.group("a"), j=m.group("j"), paused=PAUSED,
-             enq=_enqueue_name(js), be=m.group("be"))
+             after=AFTER, enq=_enqueue_name(js), be=m.group("be"))
 
 def _enqueue_name(js):
     """The queue's own enqueue function, found by the property it is taken from.
@@ -461,8 +489,8 @@ def _no_abort(m):
     """
     return (
         'if({e}.hasInterruptibleToolInProgress&&__qsp!=="later"'
-        '&&__qsp!=="{paused}"){{{log}'
-    ).format(e=m.group("e"), log=m.group("log"), paused=PAUSED)
+        '&&__qsp!=="{after}"&&__qsp!=="{paused}"){{{log}'
+    ).format(e=m.group("e"), log=m.group("log"), paused=PAUSED, after=AFTER)
 
 
 def _one_at_a_time(m):
@@ -492,7 +520,7 @@ def _one_at_a_time(m):
         'if({slash}({t})||{t}.mode==="bash"){{let {i}=[{one}(({s})=>{s}==={t})];'
         'return {reg}({i}),{exec}({i}).finally(()=>{unreg}({i})),{{processed:!0}}}}'
         'let {r}={t}.mode,{n}=(process.env.CLAUDE_QUEUE_DRAIN==="all"'
-        '||{t}.priority!=="later")'
+        '||{t}.priority!=="later"&&{t}.priority!=="after")'
         '?{deqall}(({o})=>{qh}({o})&&!{slash}({o})&&{o}.mode==={r}'
         '&&{o}.priority==={t}.priority)'
         ':[{one}(({s})=>{s}==={t})];'
@@ -530,6 +558,23 @@ def _queue_names(js):
             "queue notifier",
         ),
     }
+
+
+def _recheck_name(js):
+    """The queue's own "look again", found by the property it is taken from.
+
+    It emits if anything is queued, so the effect that drains the queue runs
+    again. That is how a message which was not runnable a moment ago gets a
+    second look without a key being pressed.
+    """
+    hits = set(re.findall(r"([\w$]+)=[\w$]+\.recheckCommandQueue,", js))
+    if len(hits) != 1:
+        raise PatchError(
+            "claude-queue: expected exactly one recheckCommandQueue binding, "
+            f"found {len(hits)}. Claude Code's internals changed; refusing to "
+            "guess."
+        )
+    return hits.pop()
 
 
 def _session_names(js):
@@ -659,12 +704,13 @@ def _keep_marker(m):
         'let __qd=process.env.CLAUDE_QUEUE_DEFAULT==="steer"?"next":"later";'
         'let __qm={c}.priority&&{c}.priority!==__qd'
         '?({c}.priority==="later"?"q ":'
-        '{c}.priority==="{paused}"?"p ":"s "):"";'
+        '{c}.priority==="{paused}"?"p ":'
+        '{c}.priority==="{after}"?"x ":"s "):"";'
         "let {v}=__qm+{raw}({c}.value),"
     ).format(fn=m.group("fn"), i=m.group("i"), cur=m.group("cur"),
              off=m.group("off"), c=m.group("c"), arr=m.group("arr"),
              ed=m.group("ed"), v=m.group("v"), raw=m.group("raw"),
-             paused=PAUSED)
+             paused=PAUSED, after=AFTER)
 
 
 def _move_fn(m, js):
@@ -709,14 +755,14 @@ def _move_fn(m, js):
         "globalThis.__qsSetMode=function(__qi,__qd){{"
         "let __qe={arr}.filter({ed}),__qc=__qe[__qi];"
         "if(!__qc||__qd!==1&&__qd!==-1)return!1;"
-        'let __qm=["later","next","{paused}"],'
+        'let __qm=["later","next","{after}","{paused}"],'
         '__qk=__qm.indexOf(__qc.priority??"next");'
         "if(__qk<0)__qk=0;"
         "__qc.priority=__qm[(__qk+__qd+__qm.length)%__qm.length];"
         "globalThis.__qsFrozen=!0,{notify}();return!0}};"
         "globalThis.__qsPoke={notify};"
     ).format(arr=m.group("arr"), ed=n["editable"], notify=n["notify"],
-             paused=PAUSED) + m.group(0)
+             paused=PAUSED, after=AFTER) + m.group(0)
 
 
 def _shift_arrows(m):
@@ -835,6 +881,125 @@ def _escape_keeps_paused(m):
     ).format(ed=m.group("ed"), e=m.group("e"), ne=m.group("ne"),
              n=m.group("n"), split=m.group("split"), arr=m.group("arr"),
              c=m.group("c"), l9=m.group("l9"), paused=PAUSED)
+
+
+def _live_tasks(js):
+    """The set Claude Code itself calls background work, by shape.
+
+    The footer's "1 shell still running" and "Waiting for 1 background agent to
+    finish" are both drawn from one filter: running or pending, not a
+    synchronous subagent, and not one of the three kinds that are never a
+    reason to wait (a cloud session, a dream, an ambient monitor). Using that
+    same filter is the whole point. The row you see and the message that waits
+    for it then agree by construction, and a task type added in a future
+    release is counted without this patch knowing it exists.
+
+    The lookup is allowed to fail. Everything else here refuses to apply rather
+    than guess, because everything else changes what runs. This one only
+    decides how long an "x" message waits, so a rename should not leave anyone
+    unpatched: it falls back to the same test written out, which is correct
+    today and merely stops learning about new task types.
+    """
+    hits = set(re.findall(
+        r"function ([\w$]+)\([\w$]+\)\{return Object\.values\([\w$]+\)"
+        r'\.filter\([\w$]+\)\.filter\(\([\w$]+\)=>[\w$]+\.type!=="remote_agent"',
+        js,
+    ))
+    if len(hits) == 1:
+        return hits.pop() + "(__qt)"
+    return (
+        "Object.values(__qt).filter((__qc)=>"
+        '(__qc.status==="running"||__qc.status==="pending")'
+        "&&__qc.isBackgrounded!==!1"
+        '&&__qc.type!=="remote_agent"&&__qc.type!=="dream"'
+        '&&!(__qc.type==="monitor_ws"&&__qc.ambient))'
+    )
+
+
+def _background_gate(m, js):
+    """The hinge: what "the background is busy" means, and who is told.
+
+    Three globals, all defined next to the priority table because that is where
+    the queue's own module already keeps everything the selectors read.
+
+    __qsBg names what is running, in the same words the footer uses, or null
+    when nothing is. It is the label as well as the test, so a row can say what
+    it is waiting for instead of just that it is waiting.
+
+    __qsBusy is that as a yes or no, and it is what the "after" getter asks.
+
+    __qsWatch is the wake-up. A message that is invisible to the drain stays
+    invisible until something pokes the queue, and the last background task
+    finishing pokes nothing: no turn ends, no key is pressed. So this subscribes
+    to the app state and calls the queue's own recheck when the background
+    empties. The subscription fires on every state change, which is often, so it
+    compares the tasks object by identity first and does nothing at all in the
+    overwhelming majority of calls.
+
+    It is asked for from both ends, because the order is not guaranteed: this
+    module may be loaded before the store is created or after it. Whichever
+    happens second installs the subscription, and a flag makes the other one a
+    no-op, so there is never a second subscription and never none.
+    """
+    return (
+        "{tab}={{now:0,next:1,later:2,"
+        'get after(){{return globalThis.__qsBusy?.()?void 0:2}}}};'
+        "globalThis.__qsBg=function(){{"
+        "let __qt=globalThis.__qsApp?.getState?.().tasks;"
+        "if(!__qt)return null;"
+        "let __ql={live};"
+        "if(!__ql.length)return null;"
+        "let __qn={{}};"
+        "for(let __qc of __ql){{"
+        'let __qk=__qc.type==="local_bash"'
+        '?(__qc.kind==="monitor"?"monitor":"shell")'
+        ':__qc.type==="local_agent"?"agent"'
+        ':__qc.type==="local_workflow"?"workflow"'
+        ':__qc.type==="in_process_teammate"?"teammate"'
+        ':__qc.type==="monitor_mcp"||__qc.type==="monitor_ws"?"monitor"'
+        ':__qc.type==="mcp_task"?"MCP task":"task";'
+        "__qn[__qk]=(__qn[__qk]||0)+1}}"
+        "return Object.entries(__qn)"
+        '.map(([__qk,__qv])=>__qv+" "+__qk+(__qv>1?"s":"")).join(", ")}};'
+        "globalThis.__qsBusy=function(){{"
+        "return globalThis.__qsBg()!==null}};"
+        "globalThis.__qsWatch=function(){{"
+        "let __qs=globalThis.__qsApp;"
+        "if(!__qs||globalThis.__qsWatching)return;"
+        "globalThis.__qsWatching=!0;"
+        "let __qp=__qs.getState().tasks;"
+        "__qs.subscribe(()=>{{"
+        "let __qt=__qs.getState().tasks;"
+        "if(__qt===__qp)return;"
+        "__qp=__qt;"
+        "if(!globalThis.__qsBusy()){recheck}()}})}};"
+        "globalThis.__qsWatch();"
+    ).format(tab=m.group("tab"), live=_live_tasks(js),
+             recheck=_recheck_name(js))
+
+
+def _capture_app_state(m):
+    """Hand the queue a way to read the task list without being a component.
+
+    Claude Code keeps its state in one store, created here and handed down
+    through React context. Everything that reads the task list reads it through
+    a hook, and a hook cannot be called from the queue: the selectors run when
+    a message is picked, not while anything is rendering.
+
+    This is the same lesson the context reporter learned the hard way. The
+    first version of that read the status line's calculation, which only runs
+    when a status line is configured, so it did nothing at all for anyone
+    without one. A path that exists is not the same as a path that runs.
+
+    So the store itself is stashed on the way past. It is created exactly once,
+    in the provider that everything else sits inside, which makes this the one
+    moment where the object exists and no component is needed to reach it.
+    """
+    return m.group("pre") + (
+        "()=>{{let __qz={pa}({init});"
+        "globalThis.__qsApp=__qz;globalThis.__qsWatch?.();"
+        "return __qz}}"
+    ).format(pa=m.group("pa"), init=m.group("init"))
 
 
 def _ctx_watch(m):
@@ -1120,12 +1285,14 @@ def _label(m):
         '&&process.env.CLAUDE_QUEUE_LABELS!=="off"){{'
         'let __qsr={arg}.restored===!0?", restored":"";'
         'if({arg}.priority==="{paused}"){v}="[paused"+__qsr+"] "+{v};'
+        'else if({arg}.priority==="{after}"){v}="[waits for "'
+        '+(globalThis.__qsBg?.()??"background")+__qsr+"] "+{v};'
         'else if({arg}.priority==="later"){v}="[waits"+__qsr+"] "+{v};'
         'else if({arg}.priority==="next"){v}="[jumps in"+__qsr+"] "+{v};'
         "}}"
         "return {mk}({{content:{v}}})}}"
     ).format(fn=m.group("fn"), arg=m.group("arg"), v=m.group("v"),
-             mk=m.group("mk"), paused=PAUSED)
+             mk=m.group("mk"), paused=PAUSED, after=AFTER)
 
 
 def _fold_fn(m):
@@ -1321,7 +1488,8 @@ def _persist(m, js):
         '__qc.mode==="prompt"&&typeof __qc.value==="string"'
         "&&__qc.value.trim()).map((__qc)=>({{value:__qc.value,"
         'priority:__qc.priority==="next"?"next":'
-        '__qc.priority==="paused"?"paused":"later",'
+        '__qc.priority==="paused"?"paused":'
+        '__qc.priority==="after"?"after":"later",'
         "restored:__qc.restored===!0}}));"
         "if(!__qr.length){{try{{__qm.unlinkSync(__qf)}}catch(__qe){{}}return}}"
         '__qm.mkdirSync(require("path").dirname(__qf),{{recursive:!0}});'
@@ -1345,7 +1513,8 @@ def _persist(m, js):
         'if(!__qc||typeof __qc.value!=="string"||!__qc.value.trim())continue;'
         "{arr}.push({{agentId:{agent}(),mode:\"prompt\",value:__qc.value,"
         'priority:__qc.priority==="next"?"next":'
-        '__qc.priority==="paused"?"paused":"later",'
+        '__qc.priority==="paused"?"paused":'
+        '__qc.priority==="after"?"after":"later",'
         "timestamp:new Date().toISOString(),restored:!0}});"
         "__qn++}}"
         "if(!__qn)return!1;"
@@ -1382,7 +1551,8 @@ def _hold_and_restore(m):
         "if({n}||{r}.isActive)return;"
         "if({t})return;"
         "if({o}.length===0)return;"
-        'if({o}.every((__qc)=>__qc.priority==="paused"))return;'
+        'if(!{o}.some((__qc)=>__qc.priority!=="paused"'
+        '&&!(__qc.priority==="after"&&globalThis.__qsBusy?.())))return;'
         "if(globalThis.__qsFrozen)return;"
         "if(globalThis.__qsHold)return;"
         "{call}({{executeInput:{e}}})}},["
@@ -1423,7 +1593,7 @@ def _not_busy_while_held(m):
 PATCH = Patch(
     name="claude-queue",
     summary="type your next instruction without derailing the running one",
-    version="2.3.1",
+    version="2.4.0",
     marker="__qsp",
     usage="""
 While Claude is working:
@@ -1431,10 +1601,21 @@ While Claude is working:
     write the migration notes      waits until it finishes this turn
     s check the staging logs       jumps in at the next tool call
     q write the migration notes    waits, said explicitly
+    x run the full test suite      waits for the turn and for the background
     p rewrite the changelog        parked, never runs until you change it
 
-Also accepted: "q: ...", "s: ..." and "p: ...". The marker is always removed
-before the text reaches Claude.
+Also accepted: "q: ...", "s: ...", "x: ..." and "p: ...". The marker is always
+removed before the text reaches Claude.
+
+A turn ending is not the work ending. Background agents, shells left running,
+monitors and workflows all outlive the turn that started them, and an ordinary
+waiting message runs straight into them. An "x" message waits for those too.
+Its row says what it is waiting for, so you can see why it has not gone yet:
+
+    [waits for 2 agents, 1 shell] run the full test suite
+
+It goes on its own as soon as the last one finishes. Nothing polls and nothing
+is interrupted.
 
 Pasted text is held to a higher bar, because code is full of single letters
 followed by a space. The colon form always counts. The space form counts only
@@ -1447,7 +1628,8 @@ With messages waiting:
     up / down                      move the highlight through the queue
     enter                          pull the highlighted one back to edit
     shift+up / shift+down          move it earlier or later in the queue
-    left / right                   change its mode: waits, jumps in, paused
+    left / right                   change its mode: waits, jumps in, waits for
+                                   the background, paused
     ctrl+enter                     let go of the queue and run it now
 
 Reading the queue never stops it draining. Changing a mode does, until you let
@@ -1838,6 +2020,21 @@ really is under the threshold again.
                 r'(?P<l9>[\w$]+)\((?P=c)\)\?"editable":"nonEditable"\)'
             ),
             _escape_keeps_paused,
+        ),
+        Edit(
+            "keep the app state where the queue can read it",
+            re.compile(
+                r'(?P<pre>AppStateProvider can not be nested within another '
+                r'AppStateProvider"\)\}.{0,200}?)'
+                r'\(\)=>(?P<pa>[\w$]+)\((?P<init>[\w$]+\?\?[\w$]+\(\),[\w$]+)\)',
+                re.S,
+            ),
+            _capture_app_state,
+        ),
+        Edit(
+            "a message can wait for the background work too",
+            re.compile(r'(?P<tab>[\w$]+)=\{now:0,next:1,later:2\};'),
+            _background_gate,
         ),
         # Last on purpose. It rewrites the queue's "something changed" call,
         # which is the shape three earlier edits use to find their way around

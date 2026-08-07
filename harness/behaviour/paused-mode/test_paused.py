@@ -106,32 +106,36 @@ try:
     for r in before:
         print("   ", r)
 
+    # Four modes since 2.4.0: waits, jumps in, waits for the background,
+    # paused. The cycle is one loop, so four presses visit all four.
     seen = []
-    for i in range(3):
+    for i in range(4):
         lab.write(RIGHT)
         lab._pump(0.8)
         cur = queue_rows(lab.screen())
-        tag = next((t for t in ("[paused]", "[waits]", "[jumps in]")
+        tag = next((t for t in ("[paused]", "[waits for", "[waits]",
+                                "[jumps in]")
                     for r in cur if t in r and "PINEAPPLE" in r), None)
         seen.append(tag)
         print(f"   right #{i+1} -> {tag}")
     check("3. right cycles through the modes",
-          len([t for t in seen if t]) == 3 and len(set(seen)) == 3,
+          len([t for t in seen if t]) == 4 and len(set(seen)) == 4,
           f"saw {seen}")
 
     back = []
-    for i in range(2):
+    for i in range(3):
         lab.write(LEFT)
         lab._pump(0.8)
         cur = queue_rows(lab.screen())
-        tag = next((t for t in ("[paused]", "[waits]", "[jumps in]")
+        tag = next((t for t in ("[paused]", "[waits for", "[waits]",
+                                "[jumps in]")
                     for r in cur if t in r and "PINEAPPLE" in r), None)
         back.append(tag)
         print(f"   left  #{i+1} -> {tag}")
-    check("3b. left cycles the other way", len(set(back)) == 2, f"saw {back}")
+    check("3b. left cycles the other way", len(set(back)) == 3, f"saw {back}")
 
     # 4. land it on [waits] and make it run.
-    for _ in range(4):
+    for _ in range(5):
         cur = queue_rows(lab.screen())
         if any("[waits]" in r and "PINEAPPLE" in r for r in cur):
             break

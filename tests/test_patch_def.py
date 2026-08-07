@@ -692,5 +692,168 @@ class NameLookupTests(unittest.TestCase):
                     patch_def._enqueue_name(js)
 
 
+def background(tasks, *, shapes=True):
+    """Run the background gate against a fake store holding these tasks.
+
+    Returns what the three globals say, plus whether the finished-work wake-up
+    fired, so one call answers "is it busy", "what does the row say" and "does
+    the queue get told" together.
+    """
+    # Claude Code's own filter, and the predicate it is built on. The gate
+    # finds the first by shape, so the same text is both what it reads and
+    # what runs.
+    live = (
+        "function live(t){return Object.values(t).filter(T0)"
+        '.filter((c)=>c.type!=="remote_agent"&&c.type!=="dream")'
+        '.filter((c)=>!(c.type==="monitor_ws"&&c.ambient))}'
+    )
+    js = "x=y.recheckCommandQueue," + (live if shapes else "")
+    code = patch_def._background_gate(Groups("", tab="TABLE"), js)
+    script = "\n".join([
+        "let TABLE,rechecks=0;",
+        "function x(){rechecks++}",
+        'function T0(e){if(e.status!=="running"&&e.status!=="pending")'
+        'return!1;if("isBackgrounded" in e&&e.isBackgrounded===!1)return!1;'
+        "return!0}",
+        live,
+        "let listeners=[],state={tasks:{}};",
+        "globalThis.__qsApp={getState:()=>state,"
+        "subscribe:(f)=>listeners.push(f)};",
+        code,
+        f"state={{tasks:{json.dumps(tasks)}}};listeners.forEach((f)=>f());",
+        "let busy=globalThis.__qsBusy(),label=globalThis.__qsBg();",
+        "let whenBusy=TABLE.after;",
+        "state={tasks:{}};listeners.forEach((f)=>f());",
+        # undefined would vanish from the JSON, and it is the whole point.
+        "console.log(JSON.stringify({busy,label,"
+        "whenBusy:whenBusy??null,whenIdle:TABLE.after??null,rechecks}));",
+    ])
+    result = subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+SHELL = {"id": "b1", "type": "local_bash", "status": "running"}
+AGENT = {"id": "a1", "type": "local_agent", "status": "running"}
+
+
+class BackgroundGateTests(unittest.TestCase):
+    """A turn ending is not the work ending.
+
+    A background agent, a shell left running, a monitor or a workflow all
+    outlive the turn that started them. An ordinary waiting message runs
+    straight into them, which is what Mounssif hit: the footer read "1 shell
+    still running" and the queue drained anyway.
+    """
+
+    def test_a_running_shell_makes_the_session_busy(self):
+        r = background({"b1": SHELL})
+        self.assertTrue(r["busy"])
+        self.assertEqual(r["label"], "1 shell")
+
+    def test_nothing_running_is_not_busy_and_has_no_label(self):
+        r = background({})
+        self.assertFalse(r["busy"])
+        self.assertIsNone(r["label"])
+
+    def test_the_after_priority_is_invisible_while_work_runs(self):
+        """Undefined is not a key in the table, so all three selectors skip it,
+        exactly the way they skip a parked message."""
+        self.assertIsNone(background({"b1": SHELL})["whenBusy"])
+
+    def test_the_after_priority_becomes_an_ordinary_wait_once_it_is_over(self):
+        self.assertEqual(background({"b1": SHELL})["whenIdle"], 2)
+
+    def test_the_queue_is_told_when_the_last_task_finishes(self):
+        """Nothing else pokes it: no turn ends and no key is pressed."""
+        self.assertEqual(background({"b1": SHELL})["rechecks"], 1)
+
+    def test_the_row_names_what_it_is_waiting_for(self):
+        r = background({"b1": SHELL, "a1": AGENT,
+                        "a2": {"id": "a2", "type": "local_agent",
+                               "status": "pending"}})
+        self.assertEqual(r["label"], "1 shell, 2 agents")
+
+    def test_a_monitor_is_named_as_a_monitor_not_a_shell(self):
+        r = background({"m1": {"id": "m1", "type": "local_bash",
+                               "kind": "monitor", "status": "running"}})
+        self.assertEqual(r["label"], "1 monitor")
+
+    def test_a_finished_task_is_not_waited_for(self):
+        self.assertFalse(background({"b1": {**SHELL,
+                                            "status": "completed"}})["busy"])
+
+    def test_a_synchronous_subagent_is_the_turn_not_the_background(self):
+        self.assertFalse(background({"a1": {**AGENT,
+                                            "isBackgrounded": False}})["busy"])
+
+    def test_a_cloud_session_is_never_a_reason_to_wait(self):
+        self.assertFalse(background({"r1": {"id": "r1",
+                                            "type": "remote_agent",
+                                            "status": "running"}})["busy"])
+
+    def test_an_ambient_monitor_is_never_a_reason_to_wait(self):
+        self.assertFalse(background({"s1": {"id": "s1", "type": "monitor_ws",
+                                            "status": "running",
+                                            "ambient": True}})["busy"])
+
+    def test_it_still_works_when_claude_code_renames_its_own_filter(self):
+        """That lookup is allowed to fail. It decides how long a message waits,
+        not what runs, so a rename must not leave anyone unpatched."""
+        r = background({"b1": SHELL,
+                        "r1": {"id": "r1", "type": "remote_agent",
+                               "status": "running"}}, shapes=False)
+        self.assertTrue(r["busy"])
+        self.assertEqual(r["label"], "1 shell")
+
+    def test_the_fallback_agrees_with_the_real_filter(self):
+        cases = [
+            {},
+            {"b1": SHELL},
+            {"a1": {**AGENT, "isBackgrounded": False}},
+            {"r1": {"id": "r1", "type": "remote_agent", "status": "running"}},
+            {"d1": {"id": "d1", "type": "dream", "status": "running"}},
+            {"b1": {**SHELL, "status": "failed"}},
+        ]
+        for tasks in cases:
+            with self.subTest(tasks=sorted(tasks)):
+                self.assertEqual(background(tasks)["label"],
+                                 background(tasks, shapes=False)["label"])
+
+    def test_the_wake_up_is_installed_once_however_the_order_falls(self):
+        self.assertIn("__qsWatching", patch_def._background_gate(
+            Groups("", tab="T"), "x=y.recheckCommandQueue,"))
+
+    def test_the_recheck_lookup_refuses_when_it_is_not_unique(self):
+        for js in ("nothing here", "a=x.recheckCommandQueue,b=y."
+                                   "recheckCommandQueue,"):
+            with self.subTest(js=js):
+                with self.assertRaises(patch_def.PatchError):
+                    patch_def._recheck_name(js)
+
+
+class BackgroundMarkerTests(unittest.TestCase):
+    """The marker side of the same feature."""
+
+    def test_x_asks_to_wait_for_the_background(self):
+        self.assertEqual(resolve("x run the tests")["priority"], "after")
+        self.assertEqual(resolve("x: run the tests")["priority"], "after")
+
+    def test_the_marker_never_reaches_the_model(self):
+        self.assertEqual(resolve("x run the tests")["value"], "run the tests")
+
+    def test_a_pasted_assignment_is_still_literal(self):
+        r = resolve("x = compute()", pasted=["x = compute()"])
+        self.assertEqual(r["value"], "x = compute()")
+        self.assertNotEqual(r["priority"], "after")
+
+    def test_it_takes_its_place_in_a_pasted_batch(self):
+        r = resolve("q: write the notes\nx: run the tests\ns: check the logs",
+                    pasted=["q: write the notes\nx: run the tests\n"
+                            "s: check the logs"])
+        self.assertEqual([m["p"] for m in r["split"]],
+                         ["later", "after", "next"])
+
+
 if __name__ == "__main__":
     unittest.main()

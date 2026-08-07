@@ -29,6 +29,8 @@ s check the logs      "s" steers: jumps in at
                       the next tool call
 q run the migration   "q" queues: waits,
                       said out loud
+x run the full suite  "x" waits for the turn
+                      AND for the background
 p rewrite the docs    "p" parks it: never runs
                       until you change it
 ```
@@ -167,6 +169,7 @@ never anything new. With `--no-path` you re-apply after updates yourself with
 | `fix the tests` (no marker) | after the current turn finishes |
 | `q fix the tests` or `q: ...` | after the current turn finishes, said explicitly |
 | `s fix the tests` or `s: ...` | at the next tool boundary, while the job is still running |
+| `x fix the tests` or `x: ...` | after the turn AND after every background task finishes |
 | `p fix the tests` or `p: ...` | never, until you give it another mode |
 | **tab** instead of enter | the opposite timing to your default, no marker needed |
 
@@ -203,7 +206,7 @@ and it comes back parked after a restart.
 | up / down | move the highlight through the waiting messages |
 | enter | pull the highlighted one back into the editor, alone; sending returns it to its slot |
 | shift+up / shift+down | move it earlier or later, highlight travels with it |
-| left / right | change its mode: waits, jumps in, paused, and round again |
+| left / right | change its mode: waits, jumps in, waits for the background, paused, and round again |
 | ctrl + enter | let go of the list and run what is runnable, now |
 | delete / backspace | remove it, **only while the editor is empty** |
 
@@ -544,13 +547,19 @@ this patches, it refuses cleanly and you run stock until the patterns catch up.
 
 **My queue looks stuck while it says "Waiting for 1 background agent to
 finish". Is it?**
-No. That state does not hold the queue, and neither does bash work pushed to
-the background with ctrl+B. Both were driven with a stopwatch against an
-unpatched Claude Code: a message queued at 17.9 seconds ran when the turn ended
-at 44.3, while the agent kept going until 108. Stock behaves identically, so
-this is not something the patch introduced or could change. Claude Code has a
-run phase named `waiting_for_agents` and deliberately does not count it as
-busy.
+No, and until 2.4.0 that was the problem rather than the reassurance. That
+state does not hold the queue, and neither does bash work pushed to the
+background with ctrl+B. Both were driven with a stopwatch against an unpatched
+Claude Code: a message queued at 17.9 seconds ran when the turn ended at 44.3,
+while the agent kept going until 108. Stock behaves identically. Claude Code
+has a run phase named `waiting_for_agents` and deliberately does not count it
+as busy.
+
+Since 2.4.0 you can ask for the other behaviour per message. `x fix the tests`
+stays queued while any background task is alive and goes when the last one
+finishes; a plain `q` still runs at the end of the turn. Same run, same
+session, measured: the control answered at 17.0 seconds with the agent still
+going, the `x` message at 77.6, four seconds after the agent reported back.
 
 **Why patch the binary instead of an extension or MCP server?**
 The behaviour being fixed lives in the input path of the terminal app itself;
